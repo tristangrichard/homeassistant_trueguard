@@ -1,0 +1,9 @@
+{
+  "domain": "trueguard",
+  "name": "Trueguard",
+  "codeowners": ["@jeroenterheerdt"],
+  "documentation": "https://www.home-assistant.io/integrations/egardia",
+  "iot_class": "local_polling",
+  "loggers": ["pythonegardia"],
+  "version": "1.0.0"
+}
