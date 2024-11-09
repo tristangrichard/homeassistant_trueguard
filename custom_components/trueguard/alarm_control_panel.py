@@ -7,13 +7,8 @@ import requests
 
 import homeassistant.components.alarm_control_panel as alarm
 from homeassistant.components.alarm_control_panel import AlarmControlPanelEntityFeature
-from homeassistant.const import (
-    STATE_ALARM_ARMED_AWAY,
-    STATE_ALARM_ARMED_HOME,
-    STATE_ALARM_ARMED_NIGHT,
-    STATE_ALARM_DISARMED,
-    STATE_ALARM_TRIGGERED,
-)
+from homeassistant.components.alarm_control_panel import AlarmControlPanelEntity, AlarmControlPanelState
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
@@ -34,13 +29,13 @@ from . import (
 _LOGGER = logging.getLogger(__name__)
 
 STATES = {
-    "ARM": STATE_ALARM_ARMED_AWAY,
-    "DAY HOME": STATE_ALARM_ARMED_HOME,
-    "DISARM": STATE_ALARM_DISARMED,
-    "ARMHOME": STATE_ALARM_ARMED_HOME,
-    "HOME": STATE_ALARM_ARMED_HOME,
-    "NIGHT HOME": STATE_ALARM_ARMED_NIGHT,
-    "TRIGGERED": STATE_ALARM_TRIGGERED,
+    "ARM": AlarmControlPanelState.ARMED_AWAY,
+    "DAY HOME": AlarmControlPanelState.ARMED_HOME,
+    "DISARM": AlarmControlPanelState.DISARMED,
+    "ARMHOME": AlarmControlPanelState.ARMED_HOME,
+    "HOME": AlarmControlPanelState.ARMED_HOME,
+    "NIGHT HOME": AlarmControlPanelState.ARMED_NIGHT,
+    "TRIGGERED": AlarmControlPanelState.TRIGGERED,
 }
 
 
