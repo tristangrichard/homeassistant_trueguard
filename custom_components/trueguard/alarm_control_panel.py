@@ -67,7 +67,7 @@ def setup_platform(
 class EgardiaAlarm(alarm.AlarmControlPanelEntity):
     """Representation of a Trueguard alarm."""
 
-    _attr_state: str | None
+    _attr_alarm_state: str | None
     _attr_code_arm_required = False
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_HOME
@@ -125,7 +125,7 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
             _LOGGER.debug("Not ignoring status %s", status)
             newstatus = STATES.get(status.upper())
             _LOGGER.debug("newstatus %s", newstatus)
-            self._attr_state = newstatus
+            self._attr_alarm_state = newstatus
         else:
             _LOGGER.error("Ignoring status")
 
