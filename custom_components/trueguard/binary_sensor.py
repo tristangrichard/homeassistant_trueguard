@@ -20,6 +20,10 @@ EGARDIA_TYPE_TO_DEVICE_CLASS = {
     "PIR kamera": BinarySensorDeviceClass.MOTION,
     "Dørkontakt": BinarySensorDeviceClass.DOOR,
     "Røg alarm": BinarySensorDeviceClass.SMOKE,
+    "IR Camera": BinarySensorDeviceClass.MOTION,
+    "IR": BinarySensorDeviceClass.MOTION,
+    "Door Contact": BinarySensorDeviceClass.DOOR,
+    "Power Switch Meter": BinarySensorDeviceClass.POWER,
 }
 
 
@@ -42,7 +46,7 @@ async def async_setup_platform(
                 name=disc_info[sensor]["name"],
                 egardia_system=hass.data[EGARDIA_DEVICE],
                 device_class=EGARDIA_TYPE_TO_DEVICE_CLASS.get(
-                    disc_info[sensor]["type_f"], None
+                    disc_info[sensor]["type"] or disc_info[sensor]["type_f"], None
                 ),
             )
             for sensor in disc_info
