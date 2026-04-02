@@ -1,21 +1,21 @@
 """Interfaces with Trueguard/Woonveilig alarm control panel."""
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 
 import requests
 
 import homeassistant.components.alarm_control_panel as alarm
-from homeassistant.components.alarm_control_panel import AlarmControlPanelEntityFeature
-from homeassistant.components.alarm_control_panel import AlarmControlPanelEntity, AlarmControlPanelState
-
+from homeassistant.components.alarm_control_panel import (
+    AlarmControlPanelEntity,
+    AlarmControlPanelEntityFeature,
+    AlarmControlPanelState,
+)
+from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-
-from datetime import timedelta
-
-SCAN_INTERVAL = timedelta(seconds=1)
 
 from . import (
     CONF_REPORT_SERVER_CODES,
@@ -25,6 +25,8 @@ from . import (
     EGARDIA_SERVER,
     REPORT_SERVER_CODES_IGNORE,
 )
+
+SCAN_INTERVAL = timedelta(seconds=1)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,30 +41,35 @@ STATES = {
 }
 
 
-def setup_platform(
+async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
-    add_entities: AddEntitiesCallback,
+    async_add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
-    """Set up the Trueguard Alarm Control Panael platform."""
+    """Set up the Trueguard Alarm Control Panel platform."""
     if discovery_info is None:
         return
+
+    host = discovery_info.get(CONF_HOST, "unknown")
+    port = discovery_info.get(CONF_PORT, "")
+
     device = EgardiaAlarm(
         discovery_info["name"],
         hass.data[EGARDIA_DEVICE],
         discovery_info[CONF_REPORT_SERVER_ENABLED],
         discovery_info.get(CONF_REPORT_SERVER_CODES),
         discovery_info[CONF_REPORT_SERVER_PORT],
+        unique_id=f"trueguard_{host}_{port}",
     )
 
-    add_entities([device], True)
+    async_add_entities([device], True)
 
 
 class EgardiaAlarm(alarm.AlarmControlPanelEntity):
     """Representation of a Trueguard alarm."""
 
-    _attr_alarm_state: str | None
+    _attr_alarm_state: AlarmControlPanelState | None = None
     _attr_code_arm_required = False
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_HOME
@@ -70,10 +77,17 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
     )
 
     def __init__(
-        self, name, egardiasystem, rs_enabled=False, rs_codes=None, rs_port=52010
+        self,
+        name,
+        egardiasystem,
+        rs_enabled=False,
+        rs_codes=None,
+        rs_port=52010,
+        unique_id=None,
     ):
         """Initialize the Egardia alarm."""
         self._attr_name = name
+        self._attr_unique_id = unique_id
         self._egardiasystem = egardiasystem
         self._rs_enabled = rs_enabled
         self._rs_codes = rs_codes
@@ -129,30 +143,36 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
         status = self._egardiasystem.getstate()
         self.parsestatus(status)
 
-    def alarm_disarm(self, code: str | None = None) -> None:
+    async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Send disarm command."""
         try:
-            self._egardiasystem.alarm_disarm()
+            await self.hass.async_add_executor_job(
+                self._egardiasystem.alarm_disarm
+            )
         except requests.exceptions.RequestException as err:
             _LOGGER.error(
                 "Trueguard device exception occurred when sending disarm command: %s",
                 err,
             )
 
-    def alarm_arm_home(self, code: str | None = None) -> None:
+    async def async_alarm_arm_home(self, code: str | None = None) -> None:
         """Send arm home command."""
         try:
-            self._egardiasystem.alarm_arm_home()
+            await self.hass.async_add_executor_job(
+                self._egardiasystem.alarm_arm_home
+            )
         except requests.exceptions.RequestException as err:
             _LOGGER.error(
                 "Trueguard device exception occurred when sending arm home command: %s",
                 err,
             )
 
-    def alarm_arm_away(self, code: str | None = None) -> None:
+    async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Send arm away command."""
         try:
-            self._egardiasystem.alarm_arm_away()
+            await self.hass.async_add_executor_job(
+                self._egardiasystem.alarm_arm_away
+            )
         except requests.exceptions.RequestException as err:
             _LOGGER.error(
                 "Trueguard device exception occurred when sending arm away command: %s",

@@ -1,4 +1,6 @@
 """Interfaces with Egardia/Woonveilig alarm control panel."""
+from __future__ import annotations
+
 import logging
 
 from .depend import egardiadevice, egardiaserver
@@ -80,7 +82,7 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
-def setup(hass: HomeAssistant, config: ConfigType) -> bool:
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Trueguard platform."""
 
     conf = config[DOMAIN]
@@ -92,9 +94,11 @@ def setup(hass: HomeAssistant, config: ConfigType) -> bool:
     rs_enabled = conf.get(CONF_REPORT_SERVER_ENABLED)
     rs_port = conf.get(CONF_REPORT_SERVER_PORT)
     try:
-        device = hass.data[EGARDIA_DEVICE] = egardiadevice.EgardiaDevice(
-            host, port, username, password, "", version
+        device = await hass.async_add_executor_job(
+            egardiadevice.EgardiaDevice,
+            host, port, username, password, "", version,
         )
+        hass.data[EGARDIA_DEVICE] = device
     except requests.exceptions.RequestException:
         _LOGGER.error(
             "An error occurred accessing your Trueguard device. "
@@ -129,16 +133,20 @@ def setup(hass: HomeAssistant, config: ConfigType) -> bool:
             _LOGGER.error("Binding error occurred while starting EgardiaServer")
             return False
 
-    discovery.load_platform(
-        hass, Platform.ALARM_CONTROL_PANEL, DOMAIN, discovered=conf, hass_config=config
+    hass.async_create_task(
+        discovery.async_load_platform(
+            hass, Platform.ALARM_CONTROL_PANEL, DOMAIN, discovered=conf, hass_config=config
+        )
     )
 
     # Get the sensors from the device and add those
     _LOGGER.debug("Getting sensors")
 
-    sensors = device.getsensors()
-    discovery.load_platform(
-        hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, config
+    sensors = await hass.async_add_executor_job(device.getsensors)
+    hass.async_create_task(
+        discovery.async_load_platform(
+            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, config
+        )
     )
 
     return True
