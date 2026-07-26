@@ -7,11 +7,12 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-
-from . import ATTR_DISCOVER_DEVICES, EGARDIA_DEVICE
+from . import ATTR_DISCOVER_DEVICES, DOMAIN, EGARDIA_DEVICE
 
 SCAN_INTERVAL = timedelta(seconds=1)
 
@@ -69,40 +70,51 @@ async def async_setup_platform(
         return
 
     disc_info = discovery_info[ATTR_DISCOVER_DEVICES]
+    async_add_entities(_build_entities(hass, disc_info), False)
 
-    async_add_entities(
-        [
-            EgardiaBinarySensor(
-                sensor_id=disc_info[sensor]["id"],
-                name=disc_info[sensor]["name"],
-                egardia_system=hass.data[EGARDIA_DEVICE],
-                sensor_data=disc_info[sensor],
-                device_class=_resolve_device_class(disc_info[sensor]),
-            )
-            for sensor in disc_info
-        ]
-        + [
-            EgardiaDiagnosticBinarySensor(
-                sensor_id=disc_info[sensor]["id"],
-                name=disc_info[sensor]["name"],
-                egardia_system=hass.data[EGARDIA_DEVICE],
-                sensor_data=disc_info[sensor],
-                diagnostic_type="battery_low",
-            )
-            for sensor in disc_info
-        ]
-        + [
-            EgardiaDiagnosticBinarySensor(
-                sensor_id=disc_info[sensor]["id"],
-                name=disc_info[sensor]["name"],
-                egardia_system=hass.data[EGARDIA_DEVICE],
-                sensor_data=disc_info[sensor],
-                diagnostic_type="tamper",
-            )
-            for sensor in disc_info
-        ],
-        False,
-    )
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Trueguard binary sensors from config entry."""
+    egardia_system = hass.data[DOMAIN][entry.entry_id][EGARDIA_DEVICE]
+    sensors = await hass.async_add_executor_job(egardia_system.getsensors)
+    async_add_entities(_build_entities(hass, sensors, egardia_system), False)
+
+
+def _build_entities(hass: HomeAssistant, disc_info, egardia_system=None):
+    """Build all binary entities from discovered sensor payloads."""
+    system = egardia_system or hass.data[EGARDIA_DEVICE]
+    return [
+        EgardiaBinarySensor(
+            sensor_id=disc_info[sensor]["id"],
+            name=disc_info[sensor]["name"],
+            egardia_system=system,
+            sensor_data=disc_info[sensor],
+            device_class=_resolve_device_class(disc_info[sensor]),
+        )
+        for sensor in disc_info
+    ] + [
+        EgardiaDiagnosticBinarySensor(
+            sensor_id=disc_info[sensor]["id"],
+            name=disc_info[sensor]["name"],
+            egardia_system=system,
+            sensor_data=disc_info[sensor],
+            diagnostic_type="battery_low",
+        )
+        for sensor in disc_info
+    ] + [
+        EgardiaDiagnosticBinarySensor(
+            sensor_id=disc_info[sensor]["id"],
+            name=disc_info[sensor]["name"],
+            egardia_system=system,
+            sensor_data=disc_info[sensor],
+            diagnostic_type="tamper",
+        )
+        for sensor in disc_info
+    ]
 
 
 class EgardiaBinarySensor(BinarySensorEntity):
@@ -133,6 +145,19 @@ class EgardiaBinarySensor(BinarySensorEntity):
         if "sirene" in sensor_type_name or "siren" in sensor_type_name:
             return "mdi:alarm-bell" if self._attr_is_on else "mdi:alarm-bell-off"
         return "mdi:checkbox-marked-circle-outline" if self._attr_is_on else "mdi:checkbox-blank-circle-outline"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information for device registry."""
+        panel_host = getattr(self._egardia_system, "_host", "unknown")
+        panel_port = getattr(self._egardia_system, "_port", "unknown")
+        panel_version = getattr(self._egardia_system, "_version", None)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{panel_host}_{panel_port}")},
+            name="Trueguard",
+            manufacturer="Trueguard / Woonveilig",
+            model=panel_version,
+        )
 
     @property
     def extra_state_attributes(self):
@@ -193,6 +218,19 @@ class EgardiaDiagnosticBinarySensor(BinarySensorEntity):
         if self._diagnostic_type == "tamper":
             return "mdi:shield-alert" if self._attr_is_on else "mdi:shield-check"
         return "mdi:help-circle-outline"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information for device registry."""
+        panel_host = getattr(self._egardia_system, "_host", "unknown")
+        panel_port = getattr(self._egardia_system, "_port", "unknown")
+        panel_version = getattr(self._egardia_system, "_version", None)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{panel_host}_{panel_port}")},
+            name="Trueguard",
+            manufacturer="Trueguard / Woonveilig",
+            model=panel_version,
+        )
 
     @property
     def extra_state_attributes(self):

@@ -12,8 +12,10 @@ from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntityFeature,
     AlarmControlPanelState,
 )
-from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
@@ -21,6 +23,7 @@ from . import (
     CONF_REPORT_SERVER_CODES,
     CONF_REPORT_SERVER_ENABLED,
     CONF_REPORT_SERVER_PORT,
+    DOMAIN,
     EGARDIA_DEVICE,
     EGARDIA_SERVER,
     REPORT_SERVER_CODES_IGNORE,
@@ -66,6 +69,26 @@ async def async_setup_platform(
     async_add_entities([device], True)
 
 
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Trueguard alarm from a config entry."""
+    conf = hass.data[DOMAIN][entry.entry_id]["conf"]
+    host = conf.get(CONF_HOST, "unknown")
+    port = conf.get(CONF_PORT, "")
+    device = EgardiaAlarm(
+        conf.get(CONF_NAME, "Trueguard"),
+        hass.data[DOMAIN][entry.entry_id][EGARDIA_DEVICE],
+        conf.get(CONF_REPORT_SERVER_ENABLED, False),
+        conf.get(CONF_REPORT_SERVER_CODES),
+        conf.get(CONF_REPORT_SERVER_PORT, 52010),
+        unique_id=f"trueguard_{host}_{port}",
+    )
+    async_add_entities([device], False)
+
+
 class EgardiaAlarm(alarm.AlarmControlPanelEntity):
     """Representation of a Trueguard alarm."""
 
@@ -105,6 +128,19 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
         if not self._rs_enabled:
             return True
         return False
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information for device registry."""
+        panel_host = getattr(self._egardiasystem, "_host", "unknown")
+        panel_port = getattr(self._egardiasystem, "_port", "unknown")
+        panel_version = getattr(self._egardiasystem, "_version", None)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{panel_host}_{panel_port}")},
+            name=self._attr_name,
+            manufacturer="Trueguard / Woonveilig",
+            model=panel_version,
+        )
 
     def handle_status_event(self, event):
         """Handle the Trueguard system status event."""
