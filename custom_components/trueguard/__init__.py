@@ -16,6 +16,7 @@ from homeassistant.const import (
     EVENT_HOMEASSISTANT_STOP,
     Platform,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import discovery
 import homeassistant.helpers.config_validation as cv
@@ -84,15 +85,43 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Trueguard platform."""
+    if DOMAIN not in config:
+        return True
 
-    conf = config[DOMAIN]
+    conf = dict(config[DOMAIN])
+    await _async_setup_from_conf(hass, conf, config)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Trueguard from a config entry."""
+    conf = dict(entry.data)
+    return await _async_setup_from_conf(hass, conf, {})
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a Trueguard config entry."""
+    server = hass.data.get(EGARDIA_SERVER)
+    if server is not None:
+        server.stop()
+        hass.data.pop(EGARDIA_SERVER, None)
+    hass.data.pop(EGARDIA_DEVICE, None)
+    return True
+
+
+async def _async_setup_from_conf(
+    hass: HomeAssistant, conf: dict, full_config: ConfigType
+) -> bool:
+    """Initialize integration from a normalized configuration dict."""
     username = conf.get(CONF_USERNAME)
     password = conf.get(CONF_PASSWORD)
     host = conf.get(CONF_HOST)
-    port = conf.get(CONF_PORT)
-    version = conf.get(CONF_VERSION)
-    rs_enabled = conf.get(CONF_REPORT_SERVER_ENABLED)
-    rs_port = conf.get(CONF_REPORT_SERVER_PORT)
+    port = conf.get(CONF_PORT, DEFAULT_PORT)
+    version = conf.get(CONF_VERSION, DEFAULT_VERSION)
+    rs_enabled = conf.get(CONF_REPORT_SERVER_ENABLED, DEFAULT_REPORT_SERVER_ENABLED)
+    rs_port = conf.get(CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT)
+    conf.setdefault(CONF_NAME, DEFAULT_NAME)
+    conf.setdefault(CONF_REPORT_SERVER_CODES, {})
     try:
         device = await hass.async_add_executor_job(
             egardiadevice.EgardiaDevice,
@@ -135,7 +164,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.async_create_task(
         discovery.async_load_platform(
-            hass, Platform.ALARM_CONTROL_PANEL, DOMAIN, discovered=conf, hass_config=config
+            hass, Platform.ALARM_CONTROL_PANEL, DOMAIN, discovered=conf, hass_config=full_config
         )
     )
 
@@ -145,12 +174,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     sensors = await hass.async_add_executor_job(device.getsensors)
     hass.async_create_task(
         discovery.async_load_platform(
-            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, config
+            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, full_config
         )
     )
     hass.async_create_task(
         discovery.async_load_platform(
-            hass, Platform.SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, config
+            hass, Platform.SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, full_config
         )
     )
 
