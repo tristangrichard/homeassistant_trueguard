@@ -5,11 +5,12 @@ from datetime import timedelta
 import re
 
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-
-from . import ATTR_DISCOVER_DEVICES, EGARDIA_DEVICE
+from . import ATTR_DISCOVER_DEVICES, DOMAIN, EGARDIA_DEVICE
 
 SCAN_INTERVAL = timedelta(seconds=1)
 
@@ -25,19 +26,32 @@ async def async_setup_platform(
         return
 
     disc_info = discovery_info[ATTR_DISCOVER_DEVICES]
+    async_add_entities(_build_entities(hass, disc_info), False)
 
-    async_add_entities(
-        [
-            EgardiaSignalStrengthSensor(
-                sensor_id=disc_info[sensor]["id"],
-                name=disc_info[sensor]["name"],
-                egardia_system=hass.data[EGARDIA_DEVICE],
-                sensor_data=disc_info[sensor],
-            )
-            for sensor in disc_info
-        ],
-        False,
-    )
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Trueguard signal sensors from config entry."""
+    egardia_system = hass.data[DOMAIN][entry.entry_id][EGARDIA_DEVICE]
+    sensors = await hass.async_add_executor_job(egardia_system.getsensors)
+    async_add_entities(_build_entities(hass, sensors, egardia_system), False)
+
+
+def _build_entities(hass: HomeAssistant, disc_info, egardia_system=None):
+    """Build all signal strength entities from discovered sensor payloads."""
+    system = egardia_system or hass.data[EGARDIA_DEVICE]
+    return [
+        EgardiaSignalStrengthSensor(
+            sensor_id=disc_info[sensor]["id"],
+            name=disc_info[sensor]["name"],
+            egardia_system=system,
+            sensor_data=disc_info[sensor],
+        )
+        for sensor in disc_info
+    ]
 
 
 class EgardiaSignalStrengthSensor(SensorEntity):
@@ -51,6 +65,31 @@ class EgardiaSignalStrengthSensor(SensorEntity):
         self._attr_native_value = None
         self._egardia_system = egardia_system
         self._sensor_data = sensor_data
+
+    @property
+    def icon(self):
+        """Return icon based on signal strength value."""
+        value = self._attr_native_value
+        if value is None:
+            return "mdi:signal-cellular-outline"
+        if value <= 2:
+            return "mdi:signal-cellular-1"
+        if value <= 5:
+            return "mdi:signal-cellular-2"
+        return "mdi:signal-cellular-3"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information for device registry."""
+        panel_host = getattr(self._egardia_system, "_host", "unknown")
+        panel_port = getattr(self._egardia_system, "_port", "unknown")
+        panel_version = getattr(self._egardia_system, "_version", None)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{panel_host}_{panel_port}")},
+            name="Trueguard",
+            manufacturer="Trueguard / Woonveilig",
+            model=panel_version,
+        )
 
     @property
     def extra_state_attributes(self):

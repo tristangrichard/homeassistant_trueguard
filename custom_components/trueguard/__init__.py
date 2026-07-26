@@ -16,6 +16,7 @@ from homeassistant.const import (
     EVENT_HOMEASSISTANT_STOP,
     Platform,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import discovery
 import homeassistant.helpers.config_validation as cv
@@ -36,6 +37,7 @@ DEFAULT_REPORT_SERVER_ENABLED = False
 DEFAULT_REPORT_SERVER_PORT = 52010
 DEFAULT_VERSION = "GATE-01"
 DOMAIN = "trueguard"
+PLATFORMS = [Platform.ALARM_CONTROL_PANEL, Platform.BINARY_SENSOR, Platform.SENSOR]
 
 EGARDIA_DEVICE = "trueguarddevice"
 EGARDIA_NAME = "egardianame"
@@ -84,58 +86,64 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Trueguard platform."""
+    if DOMAIN not in config:
+        return True
 
-    conf = config[DOMAIN]
-    username = conf.get(CONF_USERNAME)
-    password = conf.get(CONF_PASSWORD)
-    host = conf.get(CONF_HOST)
-    port = conf.get(CONF_PORT)
-    version = conf.get(CONF_VERSION)
-    rs_enabled = conf.get(CONF_REPORT_SERVER_ENABLED)
-    rs_port = conf.get(CONF_REPORT_SERVER_PORT)
-    try:
-        device = await hass.async_add_executor_job(
-            egardiadevice.EgardiaDevice,
-            host, port, username, password, "", version,
-        )
-        hass.data[EGARDIA_DEVICE] = device
-    except requests.exceptions.RequestException:
-        _LOGGER.error(
-            "An error occurred accessing your Trueguard device. "
-            "Please check configuration"
-        )
+    conf = dict(config[DOMAIN])
+    await _async_setup_from_conf(hass, conf, config)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Trueguard from a config entry."""
+    conf = dict(entry.data)
+    conf.setdefault(CONF_NAME, DEFAULT_NAME)
+    conf.setdefault(CONF_REPORT_SERVER_CODES, {})
+    device, server = await _async_init_connection(hass, conf)
+    if device is None:
         return False
-    except egardiadevice.UnauthorizedError:
-        _LOGGER.error("Unable to authorize. Wrong password or username")
+
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = {
+        EGARDIA_DEVICE: device,
+        EGARDIA_SERVER: server,
+        "conf": conf,
+    }
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a Trueguard config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
         return False
-    # Set up the trueguard server if enabled
-    if rs_enabled:
-        _LOGGER.debug("Setting up EgardiaServer")
-        try:
-            if EGARDIA_SERVER not in hass.data:
-                server = egardiaserver.EgardiaServer("", rs_port)
-                bound = server.bind()
-                if not bound:
-                    raise OSError(
-                        "Binding error occurred while starting EgardiaServer."
-                    )
-                hass.data[EGARDIA_SERVER] = server
-                server.start()
 
-            def handle_stop_event(event):
-                """Handle Home Assistant stop event."""
-                server.stop()
+    entry_data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
+    server = entry_data.get(EGARDIA_SERVER)
+    if server is not None:
+        server.stop()
+    if DOMAIN in hass.data and not hass.data[DOMAIN]:
+        hass.data.pop(DOMAIN)
+    return True
 
-            # listen to Home Assistant stop event
-            hass.bus.listen_once(EVENT_HOMEASSISTANT_STOP, handle_stop_event)
 
-        except OSError:
-            _LOGGER.error("Binding error occurred while starting EgardiaServer")
-            return False
+async def _async_setup_from_conf(
+    hass: HomeAssistant, conf: dict, full_config: ConfigType
+) -> bool:
+    """Initialize integration from a normalized configuration dict."""
+    conf.setdefault(CONF_NAME, DEFAULT_NAME)
+    conf.setdefault(CONF_REPORT_SERVER_CODES, {})
+    device, server = await _async_init_connection(hass, conf)
+    if device is None:
+        return False
+    hass.data[EGARDIA_DEVICE] = device
+    if server is not None:
+        hass.data[EGARDIA_SERVER] = server
 
     hass.async_create_task(
         discovery.async_load_platform(
-            hass, Platform.ALARM_CONTROL_PANEL, DOMAIN, discovered=conf, hass_config=config
+            hass, Platform.ALARM_CONTROL_PANEL, DOMAIN, discovered=conf, hass_config=full_config
         )
     )
 
@@ -145,14 +153,63 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     sensors = await hass.async_add_executor_job(device.getsensors)
     hass.async_create_task(
         discovery.async_load_platform(
-            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, config
+            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, full_config
         )
     )
     hass.async_create_task(
         discovery.async_load_platform(
-            hass, Platform.SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, config
+            hass, Platform.SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, full_config
         )
     )
 
     return True
+
+
+async def _async_init_connection(hass: HomeAssistant, conf: dict):
+    """Create device and optional report server from configuration."""
+    username = conf.get(CONF_USERNAME)
+    password = conf.get(CONF_PASSWORD)
+    host = conf.get(CONF_HOST)
+    port = conf.get(CONF_PORT, DEFAULT_PORT)
+    version = conf.get(CONF_VERSION, DEFAULT_VERSION)
+    rs_enabled = conf.get(CONF_REPORT_SERVER_ENABLED, DEFAULT_REPORT_SERVER_ENABLED)
+    rs_port = conf.get(CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT)
+
+    try:
+        device = await hass.async_add_executor_job(
+            egardiadevice.EgardiaDevice,
+            host, port, username, password, "", version,
+        )
+    except requests.exceptions.RequestException:
+        _LOGGER.error(
+            "An error occurred accessing your Trueguard device. "
+            "Please check configuration"
+        )
+        return None, None
+    except egardiadevice.UnauthorizedError:
+        _LOGGER.error("Unable to authorize. Wrong password or username")
+        return None, None
+
+    server = None
+    if rs_enabled:
+        _LOGGER.debug("Setting up EgardiaServer")
+        try:
+            server = egardiaserver.EgardiaServer("", rs_port)
+            bound = server.bind()
+            if not bound:
+                raise OSError(
+                    "Binding error occurred while starting EgardiaServer."
+                )
+            server.start()
+
+            def handle_stop_event(event):
+                """Handle Home Assistant stop event."""
+                server.stop()
+
+            hass.bus.listen_once(EVENT_HOMEASSISTANT_STOP, handle_stop_event)
+        except OSError:
+            _LOGGER.error("Binding error occurred while starting EgardiaServer")
+            return None, None
+
+    return device, server
 
