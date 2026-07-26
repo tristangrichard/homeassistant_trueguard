@@ -65,7 +65,7 @@ def _resolve_device_class(sensor_data):
     return None
 
 
-def _resolve_icon(sensor_data, is_on, device_class):
+def _resolve_icon(sensor_data, is_on, device_class, entity_name: str | None = None):
     """Resolve icon from device class and sensor metadata."""
     if device_class == BinarySensorDeviceClass.DOOR:
         return "mdi:door-open" if is_on else "mdi:door-closed"
@@ -79,15 +79,16 @@ def _resolve_icon(sensor_data, is_on, device_class):
     sensor = sensor_data or {}
     sensor_type_name = _sensor_type_text(sensor).lower()
     sensor_name = str(sensor.get("name", "")).lower()
+    display_name = str(entity_name or "").lower()
     sensor_type_code = _sensor_type_code(sensor)
-    lookup_text = f"{sensor_type_name} {sensor_name}"
+    lookup_text = f"{sensor_type_name} {sensor_name} {display_name}"
 
     if sensor_type_code == 37 or "keypad" in lookup_text or "tastatur" in lookup_text:
         return "mdi:dialpad"
     if sensor_type_code == 2 or "remote" in lookup_text or "fjernbetjening" in lookup_text:
         return "mdi:remote"
     if sensor_type_code in (45, 46) or "sirene" in lookup_text or "siren" in lookup_text:
-        return "mdi:alarm-bell" if is_on else "mdi:alarm-bell-off"
+        return "mdi:bullhorn" if is_on else "mdi:bullhorn-outline"
     return (
         "mdi:checkbox-marked-circle-outline"
         if is_on
@@ -163,6 +164,7 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
             self._sensor_data,
             self._attr_is_on,
             self._attr_device_class,
+            self._attr_name,
         )
         self._sync_from_coordinator()
 
@@ -178,6 +180,7 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
             self._sensor_data,
             self._attr_is_on,
             self._attr_device_class,
+            self._attr_name,
         )
 
     @property
