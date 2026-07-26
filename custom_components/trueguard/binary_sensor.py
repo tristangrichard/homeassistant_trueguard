@@ -17,16 +17,45 @@ SCAN_INTERVAL = timedelta(seconds=1)
 
 BATTERY_DEVICE_CLASS = getattr(BinarySensorDeviceClass, "BATTERY", None)
 TAMPER_DEVICE_CLASS = getattr(BinarySensorDeviceClass, "TAMPER", None)
+SOUND_DEVICE_CLASS = getattr(BinarySensorDeviceClass, "SOUND", None)
 
 EGARDIA_TYPE_TO_DEVICE_CLASS = {
     "PIR kamera": BinarySensorDeviceClass.MOTION,
     "Dørkontakt": BinarySensorDeviceClass.DOOR,
+    "Sirene": SOUND_DEVICE_CLASS,
     "Røg alarm": BinarySensorDeviceClass.SMOKE,
     "IR Camera": BinarySensorDeviceClass.MOTION,
     "IR": BinarySensorDeviceClass.MOTION,
+    "Siren": SOUND_DEVICE_CLASS,
     "Door Contact": BinarySensorDeviceClass.DOOR,
+    "Smoke Alarm": BinarySensorDeviceClass.SMOKE,
     "Power Switch Meter": BinarySensorDeviceClass.POWER,
 }
+
+EGARDIA_TYPE_CODE_TO_DEVICE_CLASS = {
+    4: BinarySensorDeviceClass.DOOR,
+    11: BinarySensorDeviceClass.SMOKE,
+    27: BinarySensorDeviceClass.MOTION,
+    45: SOUND_DEVICE_CLASS,
+    46: SOUND_DEVICE_CLASS,
+}
+
+
+def _resolve_device_class(sensor_data):
+    """Resolve a Home Assistant device class from panel sensor data."""
+    try:
+        type_code = int(sensor_data.get("type"))
+    except (TypeError, ValueError):
+        type_code = None
+
+    if type_code in EGARDIA_TYPE_CODE_TO_DEVICE_CLASS:
+        return EGARDIA_TYPE_CODE_TO_DEVICE_CLASS[type_code]
+
+    type_name = sensor_data.get("type_f")
+    if type_name in EGARDIA_TYPE_TO_DEVICE_CLASS:
+        return EGARDIA_TYPE_TO_DEVICE_CLASS[type_name]
+
+    return None
 
 
 async def async_setup_platform(
@@ -48,9 +77,7 @@ async def async_setup_platform(
                 name=disc_info[sensor]["name"],
                 egardia_system=hass.data[EGARDIA_DEVICE],
                 sensor_data=disc_info[sensor],
-                device_class=EGARDIA_TYPE_TO_DEVICE_CLASS.get(
-                    disc_info[sensor]["type"] or disc_info[sensor]["type_f"], None
-                ),
+                device_class=_resolve_device_class(disc_info[sensor]),
             )
             for sensor in disc_info
         ]
@@ -102,6 +129,9 @@ class EgardiaBinarySensor(BinarySensorEntity):
             return "mdi:smoke-detector-alert" if self._attr_is_on else "mdi:smoke-detector-variant"
         if self._attr_device_class == BinarySensorDeviceClass.POWER:
             return "mdi:power-plug" if self._attr_is_on else "mdi:power-plug-off"
+        sensor_type_name = str((self._sensor_data or {}).get("type_f", "")).lower()
+        if "sirene" in sensor_type_name or "siren" in sensor_type_name:
+            return "mdi:alarm-bell" if self._attr_is_on else "mdi:alarm-bell-off"
         return "mdi:checkbox-marked-circle-outline" if self._attr_is_on else "mdi:checkbox-blank-circle-outline"
 
     @property
