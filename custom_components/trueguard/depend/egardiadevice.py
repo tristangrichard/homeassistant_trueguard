@@ -186,16 +186,77 @@ class EgardiaDevice(object):
 
         status = str(sensor.get('status', '')).upper()
         cond = str(sensor.get('cond', ''))
+        type_name = str(sensor.get('type_f', '')).strip().lower()
+        raw_type = sensor.get('type')
+        st_raw = sensor.get('st')
 
         try:
-            st_value = int(sensor.get('st'))
+            st_value = int(st_raw)
         except (TypeError, ValueError):
             st_value = None
 
         try:
-            sensor_type = int(sensor.get('type'))
+            sensor_type = int(raw_type)
         except (TypeError, ValueError):
             sensor_type = None
+
+        if sensor_type is None and isinstance(raw_type, str):
+            type_text = raw_type.strip().lower()
+            if type_text in ['door contact', 'dørkontakt']:
+                sensor_type = 4
+            elif type_text in ['smoke alarm', 'røg alarm']:
+                sensor_type = 11
+            elif type_text in ['pir kamera', 'pir camera', 'ir', 'ir camera']:
+                sensor_type = 27
+            elif type_text in ['keypad', 'tastatur', 'remote keypad']:
+                sensor_type = 37
+            elif type_text in ['remote', 'remote controller', 'fjernbetjening']:
+                sensor_type = 2
+            elif type_text in ['sirene', 'siren']:
+                sensor_type = 45
+
+        if sensor_type is None and type_name:
+            if type_name in ['door contact', 'dørkontakt']:
+                sensor_type = 4
+            elif type_name in ['smoke alarm', 'røg alarm']:
+                sensor_type = 11
+            elif type_name in ['pir kamera', 'pir camera', 'ir', 'ir camera']:
+                sensor_type = 27
+            elif type_name in ['keypad', 'tastatur', 'remote keypad']:
+                sensor_type = 37
+            elif type_name in ['remote', 'remote controller', 'fjernbetjening']:
+                sensor_type = 2
+            elif type_name in ['sirene', 'siren']:
+                sensor_type = 45
+
+        # Deterministic parsing for known types regardless of panel version.
+        if sensor_type == 4:
+            if status in ["DOOR OPEN", "LÅS OP", "OPEN"] or st_value == 3:
+                return True
+            if status in ["DOOR CLOSE", "LÅS", "CLOSED"] or st_value == 2:
+                return False
+            if st_value is not None:
+                return st_value > 0
+            return len(cond.strip()) > 0
+
+        if sensor_type == 11:
+            if st_value is not None:
+                return st_value > 0
+            if any(keyword in status for keyword in ["SMOKE", "RØG", "ALARM", "FIRE"]):
+                return True
+            return False
+
+        if sensor_type == 27:
+            if len(cond.strip()) > 0:
+                return True
+            if st_value is not None:
+                return st_value > 0
+            return any(keyword in status for keyword in ["MOTION", "TRIGGER", "ALARM"])
+
+        if sensor_type in [2, 37, 45, 46]:
+            if st_value is not None:
+                return st_value > 0
+            return False
 
         if self._version in ["WV-1716", "GATE-01", "GATE-02"]:
             if len(cond) > 0:
@@ -235,6 +296,8 @@ class EgardiaDevice(object):
             # Generic fallback for other SMARTHOME device types
             if st_value is not None:
                 return st_value > 0
+        if st_value is not None:
+            return st_value > 0
 
         return None
 
