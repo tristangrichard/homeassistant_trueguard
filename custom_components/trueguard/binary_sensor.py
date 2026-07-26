@@ -15,6 +15,9 @@ from . import ATTR_DISCOVER_DEVICES, EGARDIA_DEVICE
 
 SCAN_INTERVAL = timedelta(seconds=1)
 
+BATTERY_DEVICE_CLASS = getattr(BinarySensorDeviceClass, "BATTERY", None)
+TAMPER_DEVICE_CLASS = getattr(BinarySensorDeviceClass, "TAMPER", None)
+
 EGARDIA_TYPE_TO_DEVICE_CLASS = {
     "PIR kamera": BinarySensorDeviceClass.MOTION,
     "Dørkontakt": BinarySensorDeviceClass.DOOR,
@@ -39,25 +42,46 @@ async def async_setup_platform(
     disc_info = discovery_info[ATTR_DISCOVER_DEVICES]
 
     async_add_entities(
-        (
+        [
             EgardiaBinarySensor(
                 sensor_id=disc_info[sensor]["id"],
                 name=disc_info[sensor]["name"],
                 egardia_system=hass.data[EGARDIA_DEVICE],
+                sensor_data=disc_info[sensor],
                 device_class=EGARDIA_TYPE_TO_DEVICE_CLASS.get(
                     disc_info[sensor]["type"] or disc_info[sensor]["type_f"], None
                 ),
             )
             for sensor in disc_info
-        ),
-        True,
+        ]
+        + [
+            EgardiaDiagnosticBinarySensor(
+                sensor_id=disc_info[sensor]["id"],
+                name=disc_info[sensor]["name"],
+                egardia_system=hass.data[EGARDIA_DEVICE],
+                sensor_data=disc_info[sensor],
+                diagnostic_type="battery_low",
+            )
+            for sensor in disc_info
+        ]
+        + [
+            EgardiaDiagnosticBinarySensor(
+                sensor_id=disc_info[sensor]["id"],
+                name=disc_info[sensor]["name"],
+                egardia_system=hass.data[EGARDIA_DEVICE],
+                sensor_data=disc_info[sensor],
+                diagnostic_type="tamper",
+            )
+            for sensor in disc_info
+        ],
+        False,
     )
 
 
 class EgardiaBinarySensor(BinarySensorEntity):
     """Represents a sensor based on an Egardia sensor (IR, Door Contact)."""
 
-    def __init__(self, sensor_id, name, egardia_system, device_class):
+    def __init__(self, sensor_id, name, egardia_system, sensor_data, device_class):
         """Initialize the sensor device."""
         self._id = sensor_id
         self._attr_name = "trueguard_" + name
@@ -65,8 +89,107 @@ class EgardiaBinarySensor(BinarySensorEntity):
         self._attr_device_class = device_class
         self._attr_is_on = None
         self._egardia_system = egardia_system
+        self._sensor_data = sensor_data
+
+    @property
+    def extra_state_attributes(self):
+        """Return extra state attributes."""
+        sensor = self._sensor_data or {}
+        return {
+            "panel_sensor_id": sensor.get("id"),
+            "panel_sensor_type": sensor.get("type"),
+            "panel_sensor_type_name": sensor.get("type_f"),
+            "zone": sensor.get("zone"),
+            "area": sensor.get("area"),
+            "status_text": sensor.get("status"),
+            "raw_state_code": sensor.get("st"),
+            "battery_ok": sensor.get("battery_ok"),
+            "tamper_ok": sensor.get("tamper_ok"),
+            "bypass": sensor.get("bypass"),
+            "temp_bypass": sensor.get("temp_bypass"),
+            "rssi": sensor.get("rssi"),
+            "firmware_version": sensor.get("ver"),
+        }
 
     def update(self) -> None:
         """Update the status."""
-        egardia_input = self._egardia_system.getsensorstate(self._id)
-        self._attr_is_on = bool(egardia_input) if egardia_input is not None else None
+        try:
+            sensor = self._egardia_system.getsensor(self._id)
+            self._sensor_data = sensor
+            egardia_input = self._egardia_system.getsensorstatefromsensor(sensor)
+            self._attr_is_on = bool(egardia_input) if egardia_input is not None else None
+        except Exception:
+            self._attr_is_on = None
+
+
+class EgardiaDiagnosticBinarySensor(BinarySensorEntity):
+    """Represents a diagnostic binary sensor for an Egardia sensor."""
+
+    def __init__(self, sensor_id, name, egardia_system, sensor_data, diagnostic_type):
+        """Initialize the diagnostic sensor."""
+        self._id = sensor_id
+        self._name = name
+        self._egardia_system = egardia_system
+        self._sensor_data = sensor_data
+        self._diagnostic_type = diagnostic_type
+        self._attr_is_on = None
+        self._attr_unique_id = f"trueguard_{sensor_id}_{diagnostic_type}"
+
+        if diagnostic_type == "battery_low":
+            self._attr_name = "trueguard_" + name + " battery low"
+            self._attr_device_class = BATTERY_DEVICE_CLASS
+        elif diagnostic_type == "tamper":
+            self._attr_name = "trueguard_" + name + " tamper"
+            self._attr_device_class = TAMPER_DEVICE_CLASS
+
+    @property
+    def extra_state_attributes(self):
+        """Return diagnostic attributes."""
+        sensor = self._sensor_data or {}
+        return {
+            "panel_sensor_id": sensor.get("id"),
+            "panel_sensor_type_name": sensor.get("type_f"),
+            "status_text": sensor.get("status"),
+            "battery_ok": sensor.get("battery_ok"),
+            "tamper_ok": sensor.get("tamper_ok"),
+            "rssi": sensor.get("rssi"),
+        }
+
+    def _parse_ok_value(self, value):
+        """Parse panel health flags where 1 means OK and non-1 means problem."""
+        if value is None:
+            return None
+        val = str(value).strip().lower()
+        if val in {"1", "true", "ok"}:
+            return True
+        if val in {"0", "false", "bad", "alert", "alarm"}:
+            return False
+        return None
+
+    def update(self) -> None:
+        """Update diagnostic status."""
+        try:
+            sensor = self._egardia_system.getsensor(self._id)
+            self._sensor_data = sensor
+
+            if sensor is None:
+                self._attr_is_on = None
+                return
+
+            if self._diagnostic_type == "battery_low":
+                is_ok = self._parse_ok_value(sensor.get("battery_ok"))
+                if is_ok is None:
+                    self._attr_is_on = None
+                else:
+                    self._attr_is_on = not is_ok
+                return
+
+            if self._diagnostic_type == "tamper":
+                is_ok = self._parse_ok_value(sensor.get("tamper_ok"))
+                if is_ok is None:
+                    status_text = str(sensor.get("tamper", "")).strip()
+                    self._attr_is_on = bool(status_text)
+                else:
+                    self._attr_is_on = not is_ok
+        except Exception:
+            self._attr_is_on = None
