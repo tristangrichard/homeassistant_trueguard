@@ -51,3 +51,9 @@ If you migrate from YAML to UI setup, remove the YAML block after successful UI 
 - Consolidated per-sensor diagnostics into attributes on the main sensor entity (no extra battery/tamper/signal entities).
 - Updated config-entry platform setup so entities are correctly owned by the integration domain.
 - Improved sensor naming to use clean panel sensor names without `trueguard_` prefix.
+
+## Release 2.2.0 highlights
+- Refactored polling to use a shared coordinator refresh path for both alarm state and binary sensors.
+- Reduced duplicate panel requests by fan-out from one fetched payload (`state` + `sensors`) per refresh cycle.
+- Improved icon mapping resilience for siren, keypad, and remote entities using type code + type text + name matching.
+- Hardened sensor state parsing for known type codes (`2`, `4`, `11`, `27`, `37`, `45`, `46`) to reduce `None` state edge cases.
