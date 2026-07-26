@@ -6,10 +6,10 @@ The project is based on the Egardia integration and adapted for Trueguard varian
 ## What's included
 - Alarm control panel entity (arm away, arm home, disarm).
 - Binary sensors for door, motion, smoke and related device types.
-- Diagnostic entities:
-  - Battery low
-  - Tamper
-  - Signal strength
+- Per-sensor health/diagnostic values as attributes on the main sensor entity:
+  - `battery_ok`
+  - `tamper_ok`
+  - `rssi`
 - State-aware icons for alarm, sensor, and diagnostic entities.
 - Device registry linking so entities appear under the integration device overview.
 - Config Flow support (UI setup in Home Assistant).
@@ -42,7 +42,12 @@ If you migrate from YAML to UI setup, remove the YAML block after successful UI 
 
 ## Release 2.0.1 highlights
 - Added UI setup flow (`config_flow` + config entry setup paths).
-- Added diagnostics (battery low, tamper, signal strength).
+- Added diagnostics for battery/tamper/signal.
 - Improved SMARTHOME state parsing and sensor type handling.
 - Added entity icons and better siren/door class mapping.
 - Added local `brand/` assets support for newer Home Assistant branding behavior.
+
+## Release 2.1.0 highlights
+- Consolidated per-sensor diagnostics into attributes on the main sensor entity (no extra battery/tamper/signal entities).
+- Updated config-entry platform setup so entities are correctly owned by the integration domain.
+- Improved sensor naming to use clean panel sensor names without `trueguard_` prefix.
