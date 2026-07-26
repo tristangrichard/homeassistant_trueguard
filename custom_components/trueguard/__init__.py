@@ -37,7 +37,7 @@ DEFAULT_REPORT_SERVER_ENABLED = False
 DEFAULT_REPORT_SERVER_PORT = 52010
 DEFAULT_VERSION = "GATE-01"
 DOMAIN = "trueguard"
-PLATFORMS = [Platform.ALARM_CONTROL_PANEL, Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS = [Platform.ALARM_CONTROL_PANEL, Platform.BINARY_SENSOR]
 
 EGARDIA_DEVICE = "trueguarddevice"
 EGARDIA_NAME = "egardianame"
@@ -154,11 +154,6 @@ async def _async_setup_from_conf(
     hass.async_create_task(
         discovery.async_load_platform(
             hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, full_config
-        )
-    )
-    hass.async_create_task(
-        discovery.async_load_platform(
-            hass, Platform.SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, full_config
         )
     )
 
