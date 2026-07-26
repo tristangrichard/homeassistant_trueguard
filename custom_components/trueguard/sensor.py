@@ -53,6 +53,18 @@ class EgardiaSignalStrengthSensor(SensorEntity):
         self._sensor_data = sensor_data
 
     @property
+    def icon(self):
+        """Return icon based on signal strength value."""
+        value = self._attr_native_value
+        if value is None:
+            return "mdi:signal-cellular-outline"
+        if value <= 2:
+            return "mdi:signal-cellular-1"
+        if value <= 5:
+            return "mdi:signal-cellular-2"
+        return "mdi:signal-cellular-3"
+
+    @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
         sensor = self._sensor_data or {}

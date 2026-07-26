@@ -92,6 +92,19 @@ class EgardiaBinarySensor(BinarySensorEntity):
         self._sensor_data = sensor_data
 
     @property
+    def icon(self):
+        """Return icon when no native device class icon is available."""
+        if self._attr_device_class == BinarySensorDeviceClass.DOOR:
+            return "mdi:door-open" if self._attr_is_on else "mdi:door-closed"
+        if self._attr_device_class == BinarySensorDeviceClass.MOTION:
+            return "mdi:motion-sensor" if self._attr_is_on else "mdi:motion-sensor-off"
+        if self._attr_device_class == BinarySensorDeviceClass.SMOKE:
+            return "mdi:smoke-detector-alert" if self._attr_is_on else "mdi:smoke-detector-variant"
+        if self._attr_device_class == BinarySensorDeviceClass.POWER:
+            return "mdi:power-plug" if self._attr_is_on else "mdi:power-plug-off"
+        return "mdi:checkbox-marked-circle-outline" if self._attr_is_on else "mdi:checkbox-blank-circle-outline"
+
+    @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
         sensor = self._sensor_data or {}
@@ -141,6 +154,15 @@ class EgardiaDiagnosticBinarySensor(BinarySensorEntity):
         elif diagnostic_type == "tamper":
             self._attr_name = "trueguard_" + name + " tamper"
             self._attr_device_class = TAMPER_DEVICE_CLASS
+
+    @property
+    def icon(self):
+        """Return icon based on diagnostic state."""
+        if self._diagnostic_type == "battery_low":
+            return "mdi:battery-alert" if self._attr_is_on else "mdi:battery"
+        if self._diagnostic_type == "tamper":
+            return "mdi:shield-alert" if self._attr_is_on else "mdi:shield-check"
+        return "mdi:help-circle-outline"
 
     @property
     def extra_state_attributes(self):

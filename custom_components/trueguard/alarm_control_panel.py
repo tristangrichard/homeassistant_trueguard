@@ -143,6 +143,20 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
         status = self._egardiasystem.getstate()
         self.parsestatus(status)
 
+    @property
+    def icon(self) -> str:
+        """Return icon based on alarm state."""
+        state = self._attr_alarm_state
+        if state == AlarmControlPanelState.DISARMED:
+            return "mdi:shield-off"
+        if state in (AlarmControlPanelState.ARMED_HOME, AlarmControlPanelState.ARMED_NIGHT):
+            return "mdi:shield-home"
+        if state == AlarmControlPanelState.ARMED_AWAY:
+            return "mdi:shield-lock"
+        if state == AlarmControlPanelState.TRIGGERED:
+            return "mdi:bell-ring"
+        return "mdi:shield"
+
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Send disarm command."""
         try:
