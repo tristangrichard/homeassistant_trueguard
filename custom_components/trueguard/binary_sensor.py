@@ -1,8 +1,6 @@
 """Interfaces with Egardia/Woonveilig alarm control panel."""
 from __future__ import annotations
 
-from datetime import timedelta
-
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -12,20 +10,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-from . import ATTR_DISCOVER_DEVICES, DOMAIN, EGARDIA_DEVICE
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-SCAN_INTERVAL = timedelta(seconds=1)
-
-SOUND_DEVICE_CLASS = getattr(BinarySensorDeviceClass, "SOUND", None)
+from . import DOMAIN, EGARDIA_SENSOR_COORDINATOR
 
 EGARDIA_TYPE_TO_DEVICE_CLASS = {
     "PIR kamera": BinarySensorDeviceClass.MOTION,
     "Dørkontakt": BinarySensorDeviceClass.DOOR,
-    "Sirene": SOUND_DEVICE_CLASS,
     "Røg alarm": BinarySensorDeviceClass.SMOKE,
     "IR Camera": BinarySensorDeviceClass.MOTION,
     "IR": BinarySensorDeviceClass.MOTION,
-    "Siren": SOUND_DEVICE_CLASS,
     "Door Contact": BinarySensorDeviceClass.DOOR,
     "Smoke Alarm": BinarySensorDeviceClass.SMOKE,
     "Power Switch Meter": BinarySensorDeviceClass.POWER,
@@ -35,26 +29,71 @@ EGARDIA_TYPE_CODE_TO_DEVICE_CLASS = {
     4: BinarySensorDeviceClass.DOOR,
     11: BinarySensorDeviceClass.SMOKE,
     27: BinarySensorDeviceClass.MOTION,
-    45: SOUND_DEVICE_CLASS,
-    46: SOUND_DEVICE_CLASS,
 }
+
+
+def _sensor_type_text(sensor_data) -> str:
+    """Return normalized sensor type text from available fields."""
+    type_name = sensor_data.get("type_f")
+    if isinstance(type_name, str) and type_name.strip():
+        return type_name.strip()
+    type_value = sensor_data.get("type")
+    if isinstance(type_value, str):
+        return type_value.strip()
+    return ""
+
+
+def _sensor_type_code(sensor_data):
+    """Return numeric sensor type code when available."""
+    try:
+        return int(sensor_data.get("type"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_device_class(sensor_data):
     """Resolve a Home Assistant device class from panel sensor data."""
-    try:
-        type_code = int(sensor_data.get("type"))
-    except (TypeError, ValueError):
-        type_code = None
+    type_code = _sensor_type_code(sensor_data)
 
     if type_code in EGARDIA_TYPE_CODE_TO_DEVICE_CLASS:
         return EGARDIA_TYPE_CODE_TO_DEVICE_CLASS[type_code]
 
-    type_name = sensor_data.get("type_f")
+    type_name = _sensor_type_text(sensor_data)
     if type_name in EGARDIA_TYPE_TO_DEVICE_CLASS:
         return EGARDIA_TYPE_TO_DEVICE_CLASS[type_name]
 
     return None
+
+
+def _resolve_icon(sensor_data, is_on, device_class, entity_name: str | None = None):
+    """Resolve icon from device class and sensor metadata."""
+    if device_class == BinarySensorDeviceClass.DOOR:
+        return "mdi:door-open" if is_on else "mdi:door-closed"
+    if device_class == BinarySensorDeviceClass.MOTION:
+        return "mdi:motion-sensor" if is_on else "mdi:motion-sensor-off"
+    if device_class == BinarySensorDeviceClass.SMOKE:
+        return "mdi:smoke-detector-alert" if is_on else "mdi:smoke-detector-variant"
+    if device_class == BinarySensorDeviceClass.POWER:
+        return "mdi:power-plug" if is_on else "mdi:power-plug-off"
+
+    sensor = sensor_data or {}
+    sensor_type_name = _sensor_type_text(sensor).lower()
+    sensor_name = str(sensor.get("name", "")).lower()
+    display_name = str(entity_name or "").lower()
+    sensor_type_code = _sensor_type_code(sensor)
+    lookup_text = f"{sensor_type_name} {sensor_name} {display_name}"
+
+    if sensor_type_code == 37 or "keypad" in lookup_text or "tastatur" in lookup_text:
+        return "mdi:dialpad"
+    if sensor_type_code == 2 or "remote" in lookup_text or "fjernbetjening" in lookup_text:
+        return "mdi:remote"
+    if sensor_type_code in (45, 46) or "sirene" in lookup_text or "siren" in lookup_text:
+        return "mdi:bullhorn" if is_on else "mdi:bullhorn-outline"
+    return (
+        "mdi:checkbox-marked-circle-outline"
+        if is_on
+        else "mdi:checkbox-blank-circle-outline"
+    )
 
 
 async def async_setup_platform(
@@ -64,11 +103,13 @@ async def async_setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Initialize the platform."""
-    if discovery_info is None or discovery_info[ATTR_DISCOVER_DEVICES] is None:
+    if discovery_info is None:
         return
 
-    disc_info = discovery_info[ATTR_DISCOVER_DEVICES]
-    async_add_entities(_build_entities(hass, disc_info), False)
+    coordinator = hass.data.get(EGARDIA_SENSOR_COORDINATOR)
+    if coordinator is None:
+        return
+    async_add_entities(_build_entities(coordinator), False)
 
 
 async def async_setup_entry(
@@ -77,31 +118,41 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Trueguard binary sensors from config entry."""
-    egardia_system = hass.data[DOMAIN][entry.entry_id][EGARDIA_DEVICE]
-    sensors = await hass.async_add_executor_job(egardia_system.getsensors)
-    async_add_entities(_build_entities(hass, sensors, egardia_system), False)
+    coordinator = hass.data[DOMAIN][entry.entry_id][EGARDIA_SENSOR_COORDINATOR]
+    async_add_entities(_build_entities(coordinator), False)
 
 
-def _build_entities(hass: HomeAssistant, disc_info, egardia_system=None):
+def _build_entities(coordinator):
     """Build all binary entities from discovered sensor payloads."""
-    system = egardia_system or hass.data[EGARDIA_DEVICE]
+    sensors = (coordinator.data or {}).get("sensors", {})
+    system = coordinator.egardia_system
     return [
         EgardiaBinarySensor(
-            sensor_id=disc_info[sensor]["id"],
-            name=disc_info[sensor]["name"],
+            coordinator=coordinator,
+            sensor_id=sensors[sensor]["id"],
+            name=sensors[sensor]["name"],
             egardia_system=system,
-            sensor_data=disc_info[sensor],
-            device_class=_resolve_device_class(disc_info[sensor]),
+            sensor_data=sensors[sensor],
+            device_class=_resolve_device_class(sensors[sensor]),
         )
-        for sensor in disc_info
+        for sensor in sensors
     ]
 
 
-class EgardiaBinarySensor(BinarySensorEntity):
+class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
     """Represents a sensor based on an Egardia sensor (IR, Door Contact)."""
 
-    def __init__(self, sensor_id, name, egardia_system, sensor_data, device_class):
+    def __init__(
+        self,
+        coordinator,
+        sensor_id,
+        name,
+        egardia_system,
+        sensor_data,
+        device_class,
+    ):
         """Initialize the sensor device."""
+        super().__init__(coordinator)
         self._id = sensor_id
         self._attr_name = name
         self._attr_unique_id = f"trueguard_{sensor_id}"
@@ -109,22 +160,38 @@ class EgardiaBinarySensor(BinarySensorEntity):
         self._attr_is_on = None
         self._egardia_system = egardia_system
         self._sensor_data = sensor_data
+        self._attr_icon = _resolve_icon(
+            self._sensor_data,
+            self._attr_is_on,
+            self._attr_device_class,
+            self._attr_name,
+        )
+        self._sync_from_coordinator()
+
+    def _sync_from_coordinator(self) -> None:
+        """Apply latest cached sensor payload from coordinator."""
+        latest = ((self.coordinator.data or {}).get("sensors", {})).get(
+            self._id, self._sensor_data
+        )
+        self._sensor_data = latest
+        egardia_input = self._egardia_system.getsensorstatefromsensor(latest)
+        self._attr_is_on = bool(egardia_input) if egardia_input is not None else None
+        self._attr_icon = _resolve_icon(
+            self._sensor_data,
+            self._attr_is_on,
+            self._attr_device_class,
+            self._attr_name,
+        )
 
     @property
     def icon(self):
         """Return icon when no native device class icon is available."""
-        if self._attr_device_class == BinarySensorDeviceClass.DOOR:
-            return "mdi:door-open" if self._attr_is_on else "mdi:door-closed"
-        if self._attr_device_class == BinarySensorDeviceClass.MOTION:
-            return "mdi:motion-sensor" if self._attr_is_on else "mdi:motion-sensor-off"
-        if self._attr_device_class == BinarySensorDeviceClass.SMOKE:
-            return "mdi:smoke-detector-alert" if self._attr_is_on else "mdi:smoke-detector-variant"
-        if self._attr_device_class == BinarySensorDeviceClass.POWER:
-            return "mdi:power-plug" if self._attr_is_on else "mdi:power-plug-off"
-        sensor_type_name = str((self._sensor_data or {}).get("type_f", "")).lower()
-        if "sirene" in sensor_type_name or "siren" in sensor_type_name:
-            return "mdi:alarm-bell" if self._attr_is_on else "mdi:alarm-bell-off"
-        return "mdi:checkbox-marked-circle-outline" if self._attr_is_on else "mdi:checkbox-blank-circle-outline"
+        return self._attr_icon
+
+    @property
+    def should_poll(self) -> bool:
+        """Coordinator handles refreshes."""
+        return False
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -159,14 +226,7 @@ class EgardiaBinarySensor(BinarySensorEntity):
             "firmware_version": sensor.get("ver"),
         }
 
-    def update(self) -> None:
-        """Update the status."""
-        try:
-            sensor = self._egardia_system.getsensor(self._id)
-            self._sensor_data = sensor
-            egardia_input = self._egardia_system.getsensorstatefromsensor(sensor)
-            self._attr_is_on = bool(egardia_input) if egardia_input is not None else None
-        except Exception:
-            self._attr_is_on = None
-
-
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator updates."""
+        self._sync_from_coordinator()
+        super()._handle_coordinator_update()

@@ -1,7 +1,6 @@
 """Interfaces with Trueguard/Woonveilig alarm control panel."""
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
 
 import requests
@@ -18,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import (
     CONF_REPORT_SERVER_CODES,
@@ -25,11 +25,10 @@ from . import (
     CONF_REPORT_SERVER_PORT,
     DOMAIN,
     EGARDIA_DEVICE,
+    EGARDIA_SENSOR_COORDINATOR,
     EGARDIA_SERVER,
     REPORT_SERVER_CODES_IGNORE,
 )
-
-SCAN_INTERVAL = timedelta(seconds=1)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,8 +55,12 @@ async def async_setup_platform(
 
     host = discovery_info.get(CONF_HOST, "unknown")
     port = discovery_info.get(CONF_PORT, "")
+    coordinator = hass.data.get(EGARDIA_SENSOR_COORDINATOR)
+    if coordinator is None:
+        return
 
     device = EgardiaAlarm(
+        coordinator,
         discovery_info["name"],
         hass.data[EGARDIA_DEVICE],
         discovery_info[CONF_REPORT_SERVER_ENABLED],
@@ -78,7 +81,9 @@ async def async_setup_entry(
     conf = hass.data[DOMAIN][entry.entry_id]["conf"]
     host = conf.get(CONF_HOST, "unknown")
     port = conf.get(CONF_PORT, "")
+    coordinator = hass.data[DOMAIN][entry.entry_id][EGARDIA_SENSOR_COORDINATOR]
     device = EgardiaAlarm(
+        coordinator,
         conf.get(CONF_NAME, "Trueguard"),
         hass.data[DOMAIN][entry.entry_id][EGARDIA_DEVICE],
         conf.get(CONF_REPORT_SERVER_ENABLED, False),
@@ -89,7 +94,7 @@ async def async_setup_entry(
     async_add_entities([device], False)
 
 
-class EgardiaAlarm(alarm.AlarmControlPanelEntity):
+class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
     """Representation of a Trueguard alarm."""
 
     _attr_alarm_state: AlarmControlPanelState | None = None
@@ -101,6 +106,7 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
 
     def __init__(
         self,
+        coordinator,
         name,
         egardiasystem,
         rs_enabled=False,
@@ -109,24 +115,26 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
         unique_id=None,
     ):
         """Initialize the Egardia alarm."""
+        super().__init__(coordinator)
         self._attr_name = name
         self._attr_unique_id = unique_id
         self._egardiasystem = egardiasystem
         self._rs_enabled = rs_enabled
-        self._rs_codes = rs_codes
+        self._rs_codes = rs_codes or {}
         self._rs_port = rs_port
+        self._apply_panel_state((self.coordinator.data or {}).get("state"))
 
     async def async_added_to_hass(self) -> None:
         """Add Egardiaserver callback if enabled."""
         if self._rs_enabled:
             _LOGGER.debug("Registering callback to Egardiaserver")
-            self.hass.data[EGARDIA_SERVER].register_callback(self.handle_status_event)
+            server = self.hass.data.get(EGARDIA_SERVER)
+            if server is not None:
+                server.register_callback(self.handle_status_event)
 
     @property
     def should_poll(self) -> bool:
-        """Poll if no report server is enabled."""
-        if not self._rs_enabled:
-            return True
+        """Coordinator handles refreshes."""
         return False
 
     @property
@@ -146,8 +154,8 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
         """Handle the Trueguard system status event."""
         if (statuscode := event.get("status")) is not None:
             status = self.lookupstatusfromcode(statuscode)
-            self.parsestatus(status)
-            self.schedule_update_ha_state()
+            self._apply_panel_state(status)
+            self.async_write_ha_state()
 
     def lookupstatusfromcode(self, statuscode):
         """Look at the rs_codes and returns the status from the code."""
@@ -162,8 +170,10 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
         )
         return status
 
-    def parsestatus(self, status):
+    def _apply_panel_state(self, status):
         """Parse the status."""
+        if status is None:
+            return
         _LOGGER.debug("Parsing status %s", status)
         # Ignore the statuscode if it is IGNORE
         if status.lower().strip() != REPORT_SERVER_CODES_IGNORE:
@@ -174,10 +184,10 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
         else:
             _LOGGER.error("Ignoring status")
 
-    def update(self) -> None:
-        """Update the alarm status."""
-        status = self._egardiasystem.getstate()
-        self.parsestatus(status)
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator updates."""
+        self._apply_panel_state((self.coordinator.data or {}).get("state"))
+        super()._handle_coordinator_update()
 
     @property
     def icon(self) -> str:
@@ -199,6 +209,7 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
             await self.hass.async_add_executor_job(
                 self._egardiasystem.alarm_disarm
             )
+            await self.coordinator.async_request_refresh()
         except requests.exceptions.RequestException as err:
             _LOGGER.error(
                 "Trueguard device exception occurred when sending disarm command: %s",
@@ -211,6 +222,7 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
             await self.hass.async_add_executor_job(
                 self._egardiasystem.alarm_arm_home
             )
+            await self.coordinator.async_request_refresh()
         except requests.exceptions.RequestException as err:
             _LOGGER.error(
                 "Trueguard device exception occurred when sending arm home command: %s",
@@ -223,6 +235,7 @@ class EgardiaAlarm(alarm.AlarmControlPanelEntity):
             await self.hass.async_add_executor_job(
                 self._egardiasystem.alarm_arm_away
             )
+            await self.coordinator.async_request_refresh()
         except requests.exceptions.RequestException as err:
             _LOGGER.error(
                 "Trueguard device exception occurred when sending arm away command: %s",

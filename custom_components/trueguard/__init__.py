@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from .depend import egardiadevice, egardiaserver
+from .coordinator import TrueguardSensorCoordinator
 import requests
 import voluptuous as vol
 
@@ -44,6 +45,7 @@ EGARDIA_NAME = "egardianame"
 EGARDIA_REPORT_SERVER_CODES = "egardia_rs_codes"
 EGARDIA_REPORT_SERVER_ENABLED = "egardia_rs_enabled"
 EGARDIA_SERVER = "egardia_server"
+EGARDIA_SENSOR_COORDINATOR = "egardia_sensor_coordinator"
 
 NOTIFICATION_ID = "trueguard_notification"
 NOTIFICATION_TITLE = "Trueguard"
@@ -104,9 +106,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     hass.data.setdefault(DOMAIN, {})
+    coordinator = TrueguardSensorCoordinator(hass, device)
+    await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = {
         EGARDIA_DEVICE: device,
         EGARDIA_SERVER: server,
+        EGARDIA_SENSOR_COORDINATOR: coordinator,
         "conf": conf,
     }
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -138,6 +143,9 @@ async def _async_setup_from_conf(
     if device is None:
         return False
     hass.data[EGARDIA_DEVICE] = device
+    coordinator = TrueguardSensorCoordinator(hass, device)
+    await coordinator.async_config_entry_first_refresh()
+    hass.data[EGARDIA_SENSOR_COORDINATOR] = coordinator
     if server is not None:
         hass.data[EGARDIA_SERVER] = server
 
@@ -147,13 +155,9 @@ async def _async_setup_from_conf(
         )
     )
 
-    # Get the sensors from the device and add those
-    _LOGGER.debug("Getting sensors")
-
-    sensors = await hass.async_add_executor_job(device.getsensors)
     hass.async_create_task(
         discovery.async_load_platform(
-            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: sensors}, full_config
+            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: None}, full_config
         )
     )
 
