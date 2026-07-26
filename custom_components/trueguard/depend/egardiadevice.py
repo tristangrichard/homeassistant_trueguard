@@ -2,6 +2,7 @@
 Trueguard / Alarm object
 """
 import logging
+import time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,10 +45,14 @@ class EgardiaDevice(object):
         self._password = password
         self._status = state
         self._version = version.upper()
+        self._sensors = {}
+        self._last_sensor_refresh = 0.0
+        self._sensor_refresh_interval_seconds = 1.0
         if self._version not in SUPPORTED_VERSIONS:
             raise VersionError('Trueguard device version '+self._version+' is unsupported.')
         else: 
             self._sensors = self.getsensors()
+            self._last_sensor_refresh = time.time()
             self.update()
 
     def state(self):
@@ -161,31 +166,85 @@ class EgardiaDevice(object):
                         sensors[sensor[keyname]]=sensor
             return sensors
         
+    def _refresh_sensors_if_needed(self, force=False):
+        """Refresh cached sensors if stale or forced."""
+        now = time.time()
+        if force or (now - self._last_sensor_refresh >= self._sensor_refresh_interval_seconds):
+            self._sensors = self.getsensors()
+            self._last_sensor_refresh = now
+
     def getsensor(self, sensorId):
-        self._sensors = self.getsensors()
+        self._refresh_sensors_if_needed()
         if sensorId in self._sensors:
             return self._sensors[sensorId]
         else:
             return None
+    def _parse_sensor_state(self, sensor):
+        """Parse an on/off state from a sensor payload."""
+        if sensor is None:
+            return None
+
+        status = str(sensor.get('status', '')).upper()
+        cond = str(sensor.get('cond', ''))
+
+        try:
+            st_value = int(sensor.get('st'))
+        except (TypeError, ValueError):
+            st_value = None
+
+        try:
+            sensor_type = int(sensor.get('type'))
+        except (TypeError, ValueError):
+            sensor_type = None
+
+        if self._version in ["WV-1716", "GATE-01", "GATE-02"]:
+            if len(cond) > 0:
+                # Return True when door is open or IR is triggered
+                return True
+            # Return False when door is closed or IR is not triggered
+            return False
+
+        if self._version in ["GATE-03", DEVICE_SMART_HOME]:
+            # Door contact
+            if sensor_type == 4:
+                if status in ["DOOR OPEN", "LÅS OP", "OPEN"] or st_value == 3:
+                    return True
+                if status in ["DOOR CLOSE", "LÅS", "CLOSED"] or st_value == 2:
+                    return False
+
+            # Smoke alarm
+            if sensor_type == 11:
+                if st_value == 0:
+                    return False
+                if st_value is not None and st_value > 0:
+                    return True
+                if any(keyword in status for keyword in ["SMOKE", "RØG", "ALARM", "FIRE"]):
+                    return True
+
+            # PIR / camera motion
+            if sensor_type == 27:
+                if len(cond.strip()) > 0:
+                    return True
+                if st_value == 0:
+                    return False
+                if st_value is not None and st_value > 0:
+                    return True
+                if any(keyword in status for keyword in ["MOTION", "TRIGGER", "ALARM"]):
+                    return True
+
+            # Generic fallback for other SMARTHOME device types
+            if st_value is not None:
+                return st_value > 0
+
+        return None
+
+    def getsensorstatefromsensor(self, sensor):
+        """Get the current boolean state from a raw sensor payload."""
+        return self._parse_sensor_state(sensor)
 
     def getsensorstate(self, sensorId):
         sensor = self.getsensor(sensorId)
-        if sensor is not None:
-            if self._version in ["WV-1716", "GATE-01", "GATE-02"]:
-                if len(sensor['cond']) > 0:
-                    # Return True when door is open or IR is triggered
-                    return True
-                else:
-                    # Return False when door is closed or IR is not triggered
-                    return False
-            elif self._version in ["GATE-03", DEVICE_SMART_HOME]:
-                if sensor['status'].upper() in ["DOOR OPEN", "LÅS OP"]:
-                    # Return True when door is open
-                    return True
-                elif sensor['status'].upper()  in ["DOOR CLOSE", "LÅS"]:
-                    return False
-        else:
-            return None
+        return self._parse_sensor_state(sensor)
 
     def dorequest(self, requesttype, action, payload=None):
         """Execute an request against the alarm panel"""
