@@ -123,8 +123,8 @@ async def async_setup_entry(
 
 def _build_entities(coordinator):
     """Build all binary entities from discovered sensor payloads."""
-    sensors = coordinator.data or {}
-    system = coordinator._egardia_system
+    sensors = (coordinator.data or {}).get("sensors", {})
+    system = coordinator.egardia_system
     return [
         EgardiaBinarySensor(
             coordinator=coordinator,
@@ -168,7 +168,9 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
 
     def _sync_from_coordinator(self) -> None:
         """Apply latest cached sensor payload from coordinator."""
-        latest = (self.coordinator.data or {}).get(self._id, self._sensor_data)
+        latest = ((self.coordinator.data or {}).get("sensors", {})).get(
+            self._id, self._sensor_data
+        )
         self._sensor_data = latest
         egardia_input = self._egardia_system.getsensorstatefromsensor(latest)
         self._attr_is_on = bool(egardia_input) if egardia_input is not None else None

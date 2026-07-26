@@ -8,28 +8,36 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from . import DOMAIN
-
 _LOGGER = logging.getLogger(__name__)
 
 
-class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
-    """Coordinate shared refreshes of Trueguard panel sensors."""
+class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Coordinate shared refreshes of Trueguard panel state and sensors."""
 
-    def __init__(self, hass: HomeAssistant, egardia_system, interval_seconds: int = 2) -> None:
+    def __init__(self, hass: HomeAssistant, egardia_system, interval_seconds: int = 1) -> None:
         """Initialize coordinator."""
         self._egardia_system = egardia_system
         super().__init__(
             hass,
             _LOGGER,
-            name=f"{DOMAIN}_sensor_refresh",
+            name="trueguard_sensor_refresh",
             update_interval=timedelta(seconds=interval_seconds),
         )
 
-    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
-        """Fetch latest sensors from panel."""
+    @property
+    def egardia_system(self):
+        """Expose underlying Egardia system."""
+        return self._egardia_system
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Fetch latest alarm state and sensors from panel."""
         try:
-            sensors = await self.hass.async_add_executor_job(self._egardia_system.getsensors)
-            return sensors or {}
+            def _fetch_panel_data():
+                return {
+                    "state": self._egardia_system.getstate(),
+                    "sensors": self._egardia_system.getsensors() or {},
+                }
+
+            return await self.hass.async_add_executor_job(_fetch_panel_data)
         except Exception as err:
-            raise UpdateFailed(f"Failed to refresh Trueguard sensors: {err}") from err
+            raise UpdateFailed(f"Failed to refresh Trueguard panel data: {err}") from err
