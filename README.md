@@ -57,3 +57,7 @@ If you migrate from YAML to UI setup, remove the YAML block after successful UI 
 - Reduced duplicate panel requests by fan-out from one fetched payload (`state` + `sensors`) per refresh cycle.
 - Improved icon mapping resilience for siren, keypad, and remote entities using type code + type text + name matching.
 - Hardened sensor state parsing for known type codes (`2`, `4`, `11`, `27`, `37`, `45`, `46`) to reduce `None` state edge cases.
+
+## Release 2.2.1 highlights
+- Fixed alarm state updates after manual overrides by restoring `CoordinatorEntity` subscription in `alarm_control_panel` (`async_added_to_hass` now calls `super()`).
+- Reduced log noise by changing per-poll request/state lines in `egardiadevice` from info level to debug level.

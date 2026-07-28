@@ -110,7 +110,7 @@ class EgardiaDevice(object):
             status = GATE03_STATES_MAPPING.get(status.upper(), "UNKNOWN")
         if self._version == DEVICE_SMART_HOME:
             status = GATE04_STATES_MAPPING.get(status.upper(), "UNKNOWN")
-        _LOGGER.info("Trueguard alarm status: "+status)
+        _LOGGER.debug("Trueguard alarm status: "+status)
         return status.upper()
 
     def getsensors(self):
@@ -313,8 +313,8 @@ class EgardiaDevice(object):
         """Execute an request against the alarm panel"""
         import requests
         requesttype = requesttype.upper()
-        _LOGGER.info("Trueguard doRequest, type: "+requesttype+", url: "+self.buildurl()+action
-                     +", payload: "+str(payload)+", auth=("+self._username+",****)")
+        _LOGGER.debug("Trueguard doRequest, type: "+requesttype+", url: "+self.buildurl()+action
+                      +", payload: "+str(payload)+", auth=("+self._username+",****)")
         if requesttype == 'GET':
             return requests.get(self.buildurl()+action,
                                 auth=(self._username, self._password), timeout=5)

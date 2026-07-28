@@ -126,6 +126,7 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
 
     async def async_added_to_hass(self) -> None:
         """Add Egardiaserver callback if enabled."""
+        await super().async_added_to_hass()
         if self._rs_enabled:
             _LOGGER.debug("Registering callback to Egardiaserver")
             server = self.hass.data.get(EGARDIA_SERVER)
