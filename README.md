@@ -61,3 +61,7 @@ If you migrate from YAML to UI setup, remove the YAML block after successful UI 
 ## Release 2.2.1 highlights
 - Fixed alarm state updates after manual overrides by restoring `CoordinatorEntity` subscription in `alarm_control_panel` (`async_added_to_hass` now calls `super()`).
 - Reduced log noise by changing per-poll request/state lines in `egardiadevice` from info level to debug level.
+
+## Release 2.2.2 highlights
+- Fixed `brand/icon.png` and `brand/icon@2x.png` to have an opaque white background inside the rounded-rect logo instead of transparency, so the icon renders cleanly instead of looking washed out.
+- Resized icon assets to the `256x256` / `512x512` spec used by Home Assistant's brand icon system.
