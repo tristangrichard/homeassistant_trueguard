@@ -106,7 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     hass.data.setdefault(DOMAIN, {})
-    coordinator = TrueguardSensorCoordinator(hass, device)
+    coordinator = TrueguardSensorCoordinator(hass, device, config_entry=entry)
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = {
         EGARDIA_DEVICE: device,
@@ -143,7 +143,7 @@ async def _async_setup_from_conf(
     if device is None:
         return False
     hass.data[EGARDIA_DEVICE] = device
-    coordinator = TrueguardSensorCoordinator(hass, device)
+    coordinator = TrueguardSensorCoordinator(hass, device, config_entry=None)
     await coordinator.async_config_entry_first_refresh()
     hass.data[EGARDIA_SENSOR_COORDINATOR] = coordinator
     if server is not None:

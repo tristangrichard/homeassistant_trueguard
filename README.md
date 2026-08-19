@@ -68,3 +68,7 @@ If you migrate from YAML to UI setup, remove the YAML block after successful UI 
 
 ## Release 2.2.3 highlights
 - Trimmed the empty transparent margin around the icon artwork and re-padded it to a consistent 10px (20px on the hDPI `icon@2x.png`) top/bottom margin, preserving aspect ratio, so the logo fills the icon frame properly.
+
+## Release 2.3.0 highlights
+- Pass `config_entry` explicitly to `TrueguardSensorCoordinator` instead of relying on Home Assistant's deprecated `ContextVar`-based auto-detection, ahead of that behavior being removed for core integrations in HA 2026.8 (custom integrations still get a deprecation warning today, but this avoids it).
+- Added a missing `custom_components/trueguard/depend/__init__.py`. Without it, `depend` was an implicit namespace package, which broke `from .depend import egardiadevice, egardiaserver` on some Home Assistant setups with `ImportError: cannot import name 'egardiadevice' from 'custom_components.trueguard.depend' (unknown location)`.
