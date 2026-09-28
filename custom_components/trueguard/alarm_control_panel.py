@@ -139,8 +139,11 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
         return False
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return device information for device registry."""
+        # Only config-entry entities may attach to a device (HA 2026.9+).
+        if self.platform is None or self.platform.config_entry is None:
+            return None
         panel_host = getattr(self._egardiasystem, "_host", "unknown")
         panel_port = getattr(self._egardiasystem, "_port", "unknown")
         panel_version = getattr(self._egardiasystem, "_version", None)
@@ -167,7 +170,7 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
                 for code in codes
                 if statuscode == code
             ),
-            "UNKNOWN Tristan",
+            "UNKNOWN",
         )
         return status
 

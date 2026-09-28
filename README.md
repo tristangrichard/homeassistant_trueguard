@@ -10,7 +10,7 @@ The project is based on the Egardia integration and adapted for Trueguard varian
   - `battery_ok`
   - `tamper_ok`
   - `rssi`
-- State-aware icons for alarm, sensor, and diagnostic entities.
+- State-aware icons for alarm and sensor entities.
 - Device registry linking so entities appear under the integration device overview.
 - Config Flow support (UI setup in Home Assistant).
 - Local integration branding assets via `custom_components/trueguard/brand/`.
@@ -31,7 +31,7 @@ trueguard:
   version: SMARTHOME
 ```
 
-If you migrate from YAML to UI setup, remove the YAML block after successful UI setup to avoid duplicate setup.
+Entities set up from YAML are not grouped under a device (Home Assistant 2026.9+ only allows config-entry entities to attach to devices). If you migrate from YAML to UI setup, remove the YAML block after successful UI setup to avoid duplicate setup.
 
 ## Supported panel versions
 `WV-1716`, `GATE-01`, `GATE-02`, `GATE-03`, `SMARTHOME`
@@ -72,3 +72,8 @@ If you migrate from YAML to UI setup, remove the YAML block after successful UI 
 ## Release 2.3.0 highlights
 - Pass `config_entry` explicitly to `TrueguardSensorCoordinator` instead of relying on Home Assistant's deprecated `ContextVar`-based auto-detection, ahead of that behavior being removed for core integrations in HA 2026.8 (custom integrations still get a deprecation warning today, but this avoids it).
 - Added a missing `custom_components/trueguard/depend/__init__.py`. Without it, `depend` was an implicit namespace package, which broke `from .depend import egardiadevice, egardiaserver` on some Home Assistant setups with `ImportError: cannot import name 'egardiadevice' from 'custom_components.trueguard.depend' (unknown location)`.
+
+## Release 2.3.1 highlights
+- Home Assistant 2026.9 compatibility: entities only attach to a device when they belong to a config entry (UI setup). YAML-configured entities no longer report `device_info`, which avoids the new "entity without config entry cannot attach a device" warning (this becomes an error in HA 2027.8).
+- Fixed a leftover debug string in the report-server status fallback (`UNKNOWN Tristan` → `UNKNOWN`).
+- Removed the unused `sensor.py` signal-strength platform. It was no longer loaded after 2.1.0 consolidated diagnostics into binary sensor attributes; `rssi` remains available as an attribute.

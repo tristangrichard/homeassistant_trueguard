@@ -194,8 +194,11 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return False
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return device information for device registry."""
+        # Only config-entry entities may attach to a device (HA 2026.9+).
+        if self.platform is None or self.platform.config_entry is None:
+            return None
         panel_host = getattr(self._egardia_system, "_host", "unknown")
         panel_port = getattr(self._egardia_system, "_port", "unknown")
         panel_version = getattr(self._egardia_system, "_version", None)
