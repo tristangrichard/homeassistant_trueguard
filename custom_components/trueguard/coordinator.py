@@ -7,32 +7,38 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .depend.egardiadevice import UnauthorizedError
+from .api import TrueguardClient, TrueguardError, UnauthorizedError, VersionError
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinate shared refreshes of Trueguard panel state and sensors."""
+    """Coordinate shared refreshes of Trueguard panel state and sensors.
+
+    Each poll reads the alarm state and the sensor list at the same time.
+    Entities are only notified when something actually changed
+    (always_update=False).
+    """
 
     def __init__(
         self,
         hass: HomeAssistant,
-        egardia_system,
+        client: TrueguardClient,
         config_entry: ConfigEntry | None,
         interval_seconds: float = 5,
     ) -> None:
         """Initialize coordinator."""
-        self._egardia_system = egardia_system
+        self._client = client
         super().__init__(
             hass,
             _LOGGER,
             config_entry=config_entry,
             name="trueguard_sensor_refresh",
             update_interval=timedelta(seconds=interval_seconds),
+            always_update=False,
         )
 
     def set_interval(self, interval_seconds: float) -> None:
@@ -41,24 +47,25 @@ class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.update_interval = timedelta(seconds=interval_seconds)
 
     @property
-    def egardia_system(self):
-        """Expose underlying Egardia system."""
-        return self._egardia_system
+    def client(self) -> TrueguardClient:
+        """The panel client."""
+        return self._client
+
+    # Kept for entities written against the old name.
+    egardia_system = client
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch latest alarm state and sensors from panel."""
         try:
-            def _fetch_panel_data():
-                return {
-                    "state": self._egardia_system.getstate(),
-                    "sensors": self._egardia_system.getsensors() or {},
-                }
-
-            return await self.hass.async_add_executor_job(_fetch_panel_data)
+            return await self._client.async_get_data()
         except UnauthorizedError as err:
             if self.config_entry is not None:
                 # Starts the reauthentication flow.
                 raise ConfigEntryAuthFailed("Wrong username or password") from err
             raise UpdateFailed(f"Trueguard panel rejected the login: {err}") from err
-        except Exception as err:
+        except VersionError as err:
+            if self.config_entry is not None:
+                raise ConfigEntryError(str(err)) from err
+            raise UpdateFailed(str(err)) from err
+        except TrueguardError as err:
             raise UpdateFailed(f"Failed to refresh Trueguard panel data: {err}") from err

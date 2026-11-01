@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import logging
 
-from .depend import egardiadevice, egardiaserver
-from .coordinator import TrueguardSensorCoordinator
-import requests
 import voluptuous as vol
+
+from .api import TrueguardClient, VersionError
+from .coordinator import TrueguardSensorCoordinator
+from .depend import egardiaserver
 
 from homeassistant.const import (
     CONF_HOST,
@@ -20,12 +21,9 @@ from homeassistant.const import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import (
-    ConfigEntryAuthFailed,
-    ConfigEntryError,
-    ConfigEntryNotReady,
-)
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import discovery
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
@@ -37,6 +35,11 @@ CONF_REPORT_SERVER_CODES = "report_server_codes"
 CONF_REPORT_SERVER_ENABLED = "report_server_enabled"
 CONF_REPORT_SERVER_PORT = "report_server_port"
 CONF_VERSION = "version"
+# Stable identity of the panel's device and alarm entity. Set when the
+# address is changed with Reconfigure, so entity and device IDs stay the same.
+CONF_DEVICE_KEY = "device_key"
+# Options that need the integration to restart when they change.
+RELOAD_OPTIONS = (CONF_REPORT_SERVER_ENABLED, CONF_REPORT_SERVER_PORT)
 
 DEFAULT_NAME = "Trueguard"
 DEFAULT_PORT = 80
@@ -112,24 +115,36 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def device_key(conf: dict) -> str:
+    """Return the panel's stable identity, originally host_port."""
+    return conf.get(CONF_DEVICE_KEY) or f"{conf.get(CONF_HOST)}_{conf.get(CONF_PORT, DEFAULT_PORT)}"
+
+
+def entry_setting(entry: ConfigEntry, key: str, default):
+    """Return a setting from the entry's options, falling back to its data."""
+    return entry.options.get(key, entry.data.get(key, default))
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Trueguard from a config entry."""
     conf = dict(entry.data)
+    # Report server settings can be changed under Configure (options).
+    conf[CONF_REPORT_SERVER_ENABLED] = entry_setting(
+        entry, CONF_REPORT_SERVER_ENABLED, DEFAULT_REPORT_SERVER_ENABLED
+    )
+    conf[CONF_REPORT_SERVER_PORT] = entry_setting(
+        entry, CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT
+    )
     conf.setdefault(CONF_NAME, DEFAULT_NAME)
     conf.setdefault(CONF_REPORT_SERVER_CODES, {})
     try:
-        device = await _async_connect_device(hass, conf)
-    except requests.exceptions.RequestException as err:
-        # Panel offline or unreachable: Home Assistant retries setup later.
-        raise ConfigEntryNotReady(
-            f"Unable to reach Trueguard panel at {conf.get(CONF_HOST)}: {err}"
-        ) from err
-    except egardiadevice.UnauthorizedError as err:
-        # Starts the reauthentication flow.
-        raise ConfigEntryAuthFailed("Wrong username or password") from err
-    except egardiadevice.VersionError as err:
+        device = _create_client(hass, conf)
+    except VersionError as err:
         raise ConfigEntryError(str(err)) from err
 
+    # The first refresh is the connection check: an unreachable panel raises
+    # ConfigEntryNotReady (setup is retried), a rejected login starts
+    # reauthentication, and a wrong panel version fails the entry.
     coordinator = TrueguardSensorCoordinator(
         hass,
         device,
@@ -167,9 +182,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Apply a new polling interval without reloading the integration."""
+    """Apply changed options.
+
+    Report server changes restart the integration; a new polling interval is
+    applied without a restart.
+    """
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if entry_data is None:
+        return
+    running = entry_data["conf"]
+    if any(
+        entry_setting(entry, key, running.get(key)) != running.get(key)
+        for key in RELOAD_OPTIONS
+    ):
+        hass.config_entries.async_schedule_reload(entry.entry_id)
         return
     coordinator = entry_data[EGARDIA_SENSOR_COORDINATOR]
     coordinator.set_interval(
@@ -200,18 +226,25 @@ async def _async_setup_from_conf(
     conf.setdefault(CONF_NAME, DEFAULT_NAME)
     conf.setdefault(CONF_REPORT_SERVER_CODES, {})
     try:
-        device = await _async_connect_device(hass, conf)
-    except requests.exceptions.RequestException:
-        _LOGGER.error(
-            "An error occurred accessing your Trueguard device. "
-            "Please check configuration"
-        )
-        return False
-    except egardiadevice.UnauthorizedError:
-        _LOGGER.error("Unable to authorize. Wrong password or username")
-        return False
-    except egardiadevice.VersionError as err:
+        device = _create_client(hass, conf)
+    except VersionError as err:
         _LOGGER.error("%s", err)
+        return False
+
+    coordinator = TrueguardSensorCoordinator(
+        hass,
+        device,
+        config_entry=None,
+        interval_seconds=conf.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+    )
+    # async_config_entry_first_refresh is only for coordinators with an entry.
+    await coordinator.async_refresh()
+    if not coordinator.last_update_success:
+        _LOGGER.error(
+            "Could not read your Trueguard panel. Check host, credentials and "
+            "version: %s",
+            coordinator.last_exception,
+        )
         return False
 
     try:
@@ -221,14 +254,6 @@ async def _async_setup_from_conf(
         return False
 
     hass.data[EGARDIA_DEVICE] = device
-    coordinator = TrueguardSensorCoordinator(
-        hass,
-        device,
-        config_entry=None,
-        interval_seconds=conf.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-    )
-    # async_config_entry_first_refresh is only for coordinators with an entry.
-    await coordinator.async_refresh()
     hass.data[EGARDIA_SENSOR_COORDINATOR] = coordinator
     if server is not None:
         hass.data[EGARDIA_SERVER] = server
@@ -253,21 +278,21 @@ async def _async_setup_from_conf(
     return True
 
 
-async def _async_connect_device(hass: HomeAssistant, conf: dict):
-    """Connect to the panel.
+def _create_client(hass: HomeAssistant, conf: dict) -> TrueguardClient:
+    """Create the panel client on Home Assistant's shared HTTP session.
 
-    Raises requests.exceptions.RequestException, egardiadevice.UnauthorizedError
-    or egardiadevice.VersionError.
+    Raises VersionError for an unsupported panel version.
     """
-    return await hass.async_add_executor_job(
-        egardiadevice.EgardiaDevice,
+    client = TrueguardClient(
+        async_get_clientsession(hass),
         conf.get(CONF_HOST),
         conf.get(CONF_PORT, DEFAULT_PORT),
         conf.get(CONF_USERNAME),
         conf.get(CONF_PASSWORD),
-        "",
         conf.get(CONF_VERSION, DEFAULT_VERSION),
     )
+    client.device_key = device_key(conf)
+    return client
 
 
 async def _async_start_report_server(hass: HomeAssistant, conf: dict):

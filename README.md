@@ -22,12 +22,23 @@ The project is based on the Egardia integration and adapted for Trueguard varian
 3. Search for `Trueguard`.
 4. Fill in host, port, username, password, and panel version.
 
-### Polling interval
-Change it under `Settings -> Devices & Services -> Trueguard -> Configure`
-(1–3600 seconds, default 5). Each poll makes two requests to the panel (alarm
-state and sensor list). A shorter interval updates sensors faster but puts more
-load on the panel's small web server; raise it if the panel starts timing out.
-The new interval applies from the next poll, without a reload.
+### Changing settings after setup
+`Settings -> Devices & Services -> Trueguard`:
+
+- **Configure**
+  - **Polling interval** (1–3600 seconds, default 5). Each poll makes two
+    requests to the panel (alarm state and sensor list). A shorter interval
+    updates sensors faster but puts more load on the panel's small web server;
+    raise it if the panel starts timing out. Applied from the next poll,
+    without a restart.
+  - **Receive reports from the panel** and **Report server port**. Changing
+    these restarts the integration once.
+- **Reconfigure** (in the integration's ⋮ menu): change the panel's host/IP,
+  port, panel version, username, or password. The new details are checked
+  against the panel before they are saved. The device and all entity IDs stay
+  the same, so automations and dashboards keep working.
+- If the panel rejects the saved password, Home Assistant asks you to sign in
+  again.
 
 ### Legacy YAML setup (still supported)
 ```yaml
@@ -95,3 +106,14 @@ Entities set up from YAML are not grouped under a device (Home Assistant 2026.9+
 - If the panel is unreachable when Home Assistant starts, setup is retried automatically (`ConfigEntryNotReady`) instead of failing permanently.
 - A rejected login (at setup or while polling) now starts Home Assistant's reauthentication flow, so you can enter new credentials without removing the integration.
 - The setup form now checks the credentials and panel version before creating the entry, and has English labels and error messages (`translations/en.json`).
+
+## Release 2.4.0 highlights
+- New async panel client (`api.py`) on Home Assistant's shared `aiohttp` session, replacing the blocking `requests`-based `depend/egardiadevice.py`. The alarm state and sensor list are read at the same time on each poll.
+- Network errors: reads are retried once; arm/disarm commands are never retried after a network error (the panel may already have acted). Both are retried once if the panel answers "Unauthorized", which some panels do now and then.
+- A failed arm/disarm command now shows an error in Home Assistant instead of only being logged.
+- New parsers (`parser.py`) with a tolerant reader for the panel's JavaScript-style answers, so commas, colons, or quotes in sensor names no longer break parsing. Answers without a declared charset are read as UTF-8, falling back to Latin-1.
+- Entities are only updated when something changed: the coordinator skips unchanged polls, and each sensor only writes its state when its own data or availability changed.
+- Startup reads the panel once instead of twice.
+- Tests: `python -m pytest tests` runs the parser tests, including real (anonymised) SMARTHOME answers.
+- Report server on/off and port can be changed under **Configure** (the integration restarts once).
+- New **Reconfigure** option to change host/IP, port, panel version, and login without removing the integration. The device and entity IDs stay the same.

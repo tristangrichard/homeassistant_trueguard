@@ -1,0 +1,28 @@
+{
+  "updates" : {
+    "mode_a1" : "Frakoblet",
+    "mode_a2" : "Frakoblet",
+    "battery_ok" : "1",
+    "battery" : "Normal",
+    "tamper_ok" : "1",
+    "tamper" : "Normal",
+    "interference_ok" : "1",
+    "interference" : "Normal",
+    "ac_activation_ok" : "1",
+    "ac_activation" : "Normal",
+    "sys_in_inst": "Under vedligeholdelse",
+    "rssi" : "1",
+    "sig_gsm_ok" : "1",
+    "sig_gsm" : "9"
+  },
+  "forms" : {
+    "pcondform1" : {
+      "mode" : "0",
+      "f_arm" : "0"
+    },
+    "pcondform2" : {
+      "mode" : "0",
+      "f_arm" : "0"
+    }
+  }
+}

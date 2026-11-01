@@ -160,6 +160,7 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_is_on = None
         self._egardia_system = egardia_system
         self._sensor_data = sensor_data
+        self._last_written = None
         self._attr_icon = _resolve_icon(
             self._sensor_data,
             self._attr_is_on,
@@ -174,8 +175,8 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
             self._id, self._sensor_data
         )
         self._sensor_data = latest
-        egardia_input = self._egardia_system.getsensorstatefromsensor(latest)
-        self._attr_is_on = bool(egardia_input) if egardia_input is not None else None
+        is_on = self._egardia_system.sensor_is_on(latest)
+        self._attr_is_on = bool(is_on) if is_on is not None else None
         self._attr_icon = _resolve_icon(
             self._sensor_data,
             self._attr_is_on,
@@ -199,14 +200,11 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
         # Only config-entry entities may attach to a device (HA 2026.9+).
         if self.platform is None or self.platform.config_entry is None:
             return None
-        panel_host = getattr(self._egardia_system, "_host", "unknown")
-        panel_port = getattr(self._egardia_system, "_port", "unknown")
-        panel_version = getattr(self._egardia_system, "_version", None)
         return DeviceInfo(
-            identifiers={(DOMAIN, f"{panel_host}_{panel_port}")},
+            identifiers={(DOMAIN, self._egardia_system.device_key)},
             name="Trueguard",
             manufacturer="Trueguard / Woonveilig",
-            model=panel_version,
+            model=self._egardia_system.version,
         )
 
     @property
@@ -229,7 +227,23 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "firmware_version": sensor.get("ver"),
         }
 
+    def _snapshot(self):
+        return (self.available, self._attr_is_on, dict(self._sensor_data or {}))
+
+    async def async_added_to_hass(self) -> None:
+        """Remember the state Home Assistant writes when the entity is added."""
+        await super().async_added_to_hass()
+        self._last_written = self._snapshot()
+
     def _handle_coordinator_update(self) -> None:
-        """Handle coordinator updates."""
+        """Handle coordinator updates.
+
+        The coordinator only calls this when some sensor changed; write state
+        only if this sensor's data or the availability changed.
+        """
         self._sync_from_coordinator()
-        super()._handle_coordinator_update()
+        snapshot = self._snapshot()
+        if snapshot == self._last_written:
+            return
+        self._last_written = snapshot
+        self.async_write_ha_state()

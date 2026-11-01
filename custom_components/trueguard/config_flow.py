@@ -5,7 +5,6 @@ from collections.abc import Mapping
 import logging
 from typing import Any
 
-import requests
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -18,8 +17,10 @@ from homeassistant.const import (
     CONF_USERNAME,
 )
 from homeassistant.core import callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import (
+    CONF_DEVICE_KEY,
     CONF_REPORT_SERVER_ENABLED,
     CONF_REPORT_SERVER_PORT,
     CONF_VERSION,
@@ -32,8 +33,16 @@ from . import (
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
+    device_key,
+    entry_setting,
 )
-from .depend import egardiadevice
+from .api import (
+    PanelParseError,
+    TrueguardClient,
+    TrueguardConnectionError,
+    UnauthorizedError,
+    VersionError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,20 +63,22 @@ class TrueguardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_validate(self, data: Mapping[str, Any]) -> str | None:
         """Try to log in to the panel. Return an error key, or None if it worked."""
         try:
-            await self.hass.async_add_executor_job(
-                egardiadevice.EgardiaDevice,
+            client = TrueguardClient(
+                async_get_clientsession(self.hass),
                 data[CONF_HOST],
                 data.get(CONF_PORT, DEFAULT_PORT),
                 data[CONF_USERNAME],
                 data[CONF_PASSWORD],
-                "",
                 data.get(CONF_VERSION, DEFAULT_VERSION),
             )
-        except egardiadevice.UnauthorizedError:
+            await client.async_get_data()
+        except UnauthorizedError:
             return "invalid_auth"
-        except egardiadevice.VersionError:
+        except (VersionError, PanelParseError):
+            # A panel that answers with something unexpected is usually set
+            # to the wrong version.
             return "wrong_version"
-        except requests.exceptions.RequestException:
+        except TrueguardConnectionError:
             return "cannot_connect"
         except Exception:  # pylint: disable=broad-except
             _LOGGER.exception("Unexpected error while connecting to Trueguard panel")
@@ -118,6 +129,50 @@ class TrueguardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
+    async def async_step_reconfigure(self, user_input=None):
+        """Change the panel's address, version or login."""
+        entry = self._get_reconfigure_entry()
+        errors = {}
+
+        if user_input is not None:
+            new_unique_id = f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
+            if any(
+                other.unique_id == new_unique_id and other.entry_id != entry.entry_id
+                for other in self._async_current_entries(include_ignore=False)
+            ):
+                return self.async_abort(reason="already_configured")
+
+            data = {
+                **entry.data,
+                **user_input,
+                # Keep the original identity so the device and the alarm
+                # entity keep their IDs when the address changes.
+                CONF_DEVICE_KEY: device_key(entry.data),
+            }
+            if (error := await self._async_validate(data)) is None:
+                return self.async_update_reload_and_abort(
+                    entry, unique_id=new_unique_id, data=data
+                )
+            errors["base"] = error
+
+        current = {**entry.data, **(user_input or {})}
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST, default=current.get(CONF_HOST, vol.UNDEFINED)): str,
+                vol.Required(CONF_PORT, default=current.get(CONF_PORT, DEFAULT_PORT)): int,
+                vol.Required(
+                    CONF_VERSION, default=current.get(CONF_VERSION, DEFAULT_VERSION)
+                ): vol.In(SUPPORTED_VERSIONS),
+                vol.Required(
+                    CONF_USERNAME, default=current.get(CONF_USERNAME, vol.UNDEFINED)
+                ): str,
+                vol.Required(CONF_PASSWORD): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="reconfigure", data_schema=schema, errors=errors
+        )
+
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
         """Start reauthentication after the panel rejected the login."""
         return await self.async_step_reauth_confirm()
@@ -150,22 +205,35 @@ class TrueguardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class TrueguardOptionsFlow(config_entries.OptionsFlow):
-    """Change the polling interval after setup."""
+    """Change polling and report server settings after setup."""
 
     async def async_step_init(self, user_input=None):
         """Show the options form."""
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        current = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-        )
+        entry = self.config_entry
         schema = vol.Schema(
             {
-                vol.Required(CONF_SCAN_INTERVAL, default=current): vol.All(
+                vol.Required(
+                    CONF_SCAN_INTERVAL,
+                    default=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): vol.All(
                     vol.Coerce(float),
                     vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
                 ),
+                vol.Required(
+                    CONF_REPORT_SERVER_ENABLED,
+                    default=entry_setting(
+                        entry, CONF_REPORT_SERVER_ENABLED, DEFAULT_REPORT_SERVER_ENABLED
+                    ),
+                ): bool,
+                vol.Required(
+                    CONF_REPORT_SERVER_PORT,
+                    default=entry_setting(
+                        entry, CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

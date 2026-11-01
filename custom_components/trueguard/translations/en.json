@@ -21,6 +21,17 @@
           "username": "Username",
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Trueguard",
+        "description": "Change the panel's address, version or login. The new details are checked against the panel before they are saved. Entities and their IDs stay the same.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "version": "Panel version",
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -31,16 +42,19 @@
     },
     "abort": {
       "already_configured": "This panel is already configured.",
-      "reauth_successful": "Signed in again."
+      "reauth_successful": "Signed in again.",
+      "reconfigure_successful": "The panel settings were updated."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Trueguard options",
-        "description": "Each poll asks the panel for its alarm state and its sensor list. A shorter interval updates sensors faster but puts more load on the panel's small web server. If the panel starts timing out, raise the interval.",
+        "description": "Polling: each poll asks the panel for its alarm state and sensor list. A shorter interval updates sensors faster but puts more load on the panel's small web server.\n\nReport server: lets the panel push alarm reports to Home Assistant. Changing these settings restarts the integration.",
         "data": {
-          "scan_interval": "Polling interval (seconds, 1–3600)"
+          "scan_interval": "Polling interval (seconds, 1–3600)",
+          "report_server_enabled": "Receive reports from the panel",
+          "report_server_port": "Report server port"
         }
       }
     }
