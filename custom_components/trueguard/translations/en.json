@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Trueguard",
+        "data": {
+          "name": "Name",
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password",
+          "version": "Panel version",
+          "report_server_enabled": "Receive reports from the panel",
+          "report_server_port": "Report server port"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Trueguard again",
+        "description": "The panel at {host} rejected the saved login. Enter the username and password for the panel's web interface.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the panel. Check the host and port.",
+      "invalid_auth": "Wrong username or password.",
+      "wrong_version": "The panel did not answer as this panel version. Pick another version.",
+      "unknown": "Unexpected error. See the Home Assistant log."
+    },
+    "abort": {
+      "already_configured": "This panel is already configured.",
+      "reauth_successful": "Signed in again."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Trueguard options",
+        "description": "Each poll asks the panel for its alarm state and its sensor list. A shorter interval updates sensors faster but puts more load on the panel's small web server. If the panel starts timing out, raise the interval.",
+        "data": {
+          "scan_interval": "Polling interval (seconds, 1–3600)"
+        }
+      }
+    }
+  }
+}

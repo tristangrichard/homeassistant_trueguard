@@ -13,7 +13,7 @@ from homeassistant.components.alarm_control_panel import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
@@ -67,6 +67,7 @@ async def async_setup_platform(
         discovery_info.get(CONF_REPORT_SERVER_CODES),
         discovery_info[CONF_REPORT_SERVER_PORT],
         unique_id=f"trueguard_{host}_{port}",
+        server=hass.data.get(EGARDIA_SERVER),
     )
 
     async_add_entities([device], True)
@@ -81,15 +82,16 @@ async def async_setup_entry(
     conf = hass.data[DOMAIN][entry.entry_id]["conf"]
     host = conf.get(CONF_HOST, "unknown")
     port = conf.get(CONF_PORT, "")
-    coordinator = hass.data[DOMAIN][entry.entry_id][EGARDIA_SENSOR_COORDINATOR]
+    entry_data = hass.data[DOMAIN][entry.entry_id]
     device = EgardiaAlarm(
-        coordinator,
+        entry_data[EGARDIA_SENSOR_COORDINATOR],
         conf.get(CONF_NAME, "Trueguard"),
-        hass.data[DOMAIN][entry.entry_id][EGARDIA_DEVICE],
+        entry_data[EGARDIA_DEVICE],
         conf.get(CONF_REPORT_SERVER_ENABLED, False),
         conf.get(CONF_REPORT_SERVER_CODES),
         conf.get(CONF_REPORT_SERVER_PORT, 52010),
         unique_id=f"trueguard_{host}_{port}",
+        server=entry_data.get(EGARDIA_SERVER),
     )
     async_add_entities([device], False)
 
@@ -113,6 +115,7 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
         rs_codes=None,
         rs_port=52010,
         unique_id=None,
+        server=None,
     ):
         """Initialize the Egardia alarm."""
         super().__init__(coordinator)
@@ -122,16 +125,22 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
         self._rs_enabled = rs_enabled
         self._rs_codes = rs_codes or {}
         self._rs_port = rs_port
+        self._server = server
         self._apply_panel_state((self.coordinator.data or {}).get("state"))
 
     async def async_added_to_hass(self) -> None:
         """Add Egardiaserver callback if enabled."""
         await super().async_added_to_hass()
-        if self._rs_enabled:
+        server = self._server
+        if self._rs_enabled and server is not None:
             _LOGGER.debug("Registering callback to Egardiaserver")
-            server = self.hass.data.get(EGARDIA_SERVER)
-            if server is not None:
-                server.register_callback(self.handle_status_event)
+            server.register_callback(self.handle_status_event)
+
+            def _unregister() -> None:
+                if self.handle_status_event in server.callbacks:
+                    server.callbacks.remove(self.handle_status_event)
+
+            self.async_on_remove(_unregister)
 
     @property
     def should_poll(self) -> bool:
@@ -155,11 +164,29 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
         )
 
     def handle_status_event(self, event):
-        """Handle the Trueguard system status event."""
-        if (statuscode := event.get("status")) is not None:
-            status = self.lookupstatusfromcode(statuscode)
-            self._apply_panel_state(status)
-            self.async_write_ha_state()
+        """Handle a report from the panel.
+
+        Called from the report server's own thread, so hand the event over to
+        Home Assistant's event loop before touching entity state.
+        """
+        if self.hass is None:
+            return
+        self.hass.loop.call_soon_threadsafe(self._async_handle_status_event, event)
+
+    @callback
+    def _async_handle_status_event(self, event) -> None:
+        """Apply a panel report on the event loop."""
+        if (statuscode := event.get("status")) is None:
+            return
+        status = self.lookupstatusfromcode(statuscode)
+        if status == "UNKNOWN" or STATES.get(status) is None:
+            # No mapping for this code: ask the panel for its state now
+            # instead of waiting for the next poll.
+            _LOGGER.debug("Report code %s not mapped, refreshing", statuscode)
+            self.hass.async_create_task(self.coordinator.async_request_refresh())
+            return
+        self._apply_panel_state(status)
+        self.async_write_ha_state()
 
     def lookupstatusfromcode(self, statuscode):
         """Look at the rs_codes and returns the status from the code."""
@@ -186,7 +213,7 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
             _LOGGER.debug("newstatus %s", newstatus)
             self._attr_alarm_state = newstatus
         else:
-            _LOGGER.error("Ignoring status")
+            _LOGGER.debug("Ignoring status")
 
     def _handle_coordinator_update(self) -> None:
         """Handle coordinator updates."""

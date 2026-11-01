@@ -5,14 +5,7 @@ import socketserver
 import sys
 import threading
 
-console = logging.StreamHandler()
-console.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
-console.setFormatter(formatter)
-
 _LOGGER = logging.getLogger(__name__)
-_LOGGER.addHandler(console)
-_LOGGER.setLevel(logging.DEBUG)
 
 DEFAULT_RESPONSE = '\u0006'
 
@@ -22,7 +15,7 @@ class EgardiaServer(socketserver.TCPServer, threading.Thread):
 
     def __init__(self, host, port):
         """Prepare server."""
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, name="trueguard_report_server", daemon=True)
         self._address = (host, port)
         self.callbacks = []
         socketserver.TCPServer.__init__(
@@ -69,9 +62,15 @@ class EgardiaServer(socketserver.TCPServer, threading.Thread):
         self.serve_forever()
 
     def stop(self):
-        """Stop the server."""
+        """Stop the server and release the port.
+
+        Blocks until the serve loop has exited, so call it from a worker
+        thread, not from the event loop.
+        """
         _LOGGER.info('Stopping server %s', self._address)
-        self.shutdown()
+        if self.is_alive():
+            self.shutdown()
+        self.server_close()
 
 
 class EgardiaServerHandler(socketserver.BaseRequestHandler):
@@ -80,9 +79,14 @@ class EgardiaServerHandler(socketserver.BaseRequestHandler):
     def handle(self):
         """Handle messages to this server."""
         # self.request is the TCP socket connected to the client
-        data = self.request.recv(1024).strip()
-        data = data.decode('utf8')
-        if data.startswith('['):
+        self.request.settimeout(15)
+        try:
+            data = self.request.recv(1024).strip()
+        except OSError:
+            return
+        data = data.decode('utf8', errors='replace')
+        _LOGGER.debug("Received report from alarm system: %s", data)
+        if data.startswith('[') and ' ' in data:
             new_status = data[data.index(' ') + 1:]
             new_status = new_status[:-1]
             _LOGGER.debug(
@@ -91,7 +95,10 @@ class EgardiaServerHandler(socketserver.BaseRequestHandler):
                 self.server.status = new_status
                 # self.server is the socketserver
                 self.server.notify({'status': new_status})
-        self.request.sendall(DEFAULT_RESPONSE.encode('utf8'))
+        try:
+            self.request.sendall(DEFAULT_RESPONSE.encode('utf8'))
+        except OSError:
+            pass
 
 
 def main():

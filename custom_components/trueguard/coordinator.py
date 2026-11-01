@@ -7,7 +7,10 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .depend.egardiadevice import UnauthorizedError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,7 +23,7 @@ class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         hass: HomeAssistant,
         egardia_system,
         config_entry: ConfigEntry | None,
-        interval_seconds: int = 1,
+        interval_seconds: float = 5,
     ) -> None:
         """Initialize coordinator."""
         self._egardia_system = egardia_system
@@ -31,6 +34,11 @@ class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name="trueguard_sensor_refresh",
             update_interval=timedelta(seconds=interval_seconds),
         )
+
+    def set_interval(self, interval_seconds: float) -> None:
+        """Change the polling interval; takes effect from the next poll."""
+        _LOGGER.debug("Polling Trueguard panel every %s s", interval_seconds)
+        self.update_interval = timedelta(seconds=interval_seconds)
 
     @property
     def egardia_system(self):
@@ -47,5 +55,10 @@ class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
 
             return await self.hass.async_add_executor_job(_fetch_panel_data)
+        except UnauthorizedError as err:
+            if self.config_entry is not None:
+                # Starts the reauthentication flow.
+                raise ConfigEntryAuthFailed("Wrong username or password") from err
+            raise UpdateFailed(f"Trueguard panel rejected the login: {err}") from err
         except Exception as err:
             raise UpdateFailed(f"Failed to refresh Trueguard panel data: {err}") from err

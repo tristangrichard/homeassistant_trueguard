@@ -22,6 +22,13 @@ The project is based on the Egardia integration and adapted for Trueguard varian
 3. Search for `Trueguard`.
 4. Fill in host, port, username, password, and panel version.
 
+### Polling interval
+Change it under `Settings -> Devices & Services -> Trueguard -> Configure`
+(1–3600 seconds, default 5). Each poll makes two requests to the panel (alarm
+state and sensor list). A shorter interval updates sensors faster but puts more
+load on the panel's small web server; raise it if the panel starts timing out.
+The new interval applies from the next poll, without a reload.
+
 ### Legacy YAML setup (still supported)
 ```yaml
 trueguard:
@@ -29,6 +36,7 @@ trueguard:
   username: YOUR_USERNAME
   password: YOUR_PASSWORD
   version: SMARTHOME
+  scan_interval: 5  # optional, seconds (1-3600)
 ```
 
 Entities set up from YAML are not grouped under a device (Home Assistant 2026.9+ only allows config-entry entities to attach to devices). If you migrate from YAML to UI setup, remove the YAML block after successful UI setup to avoid duplicate setup.
@@ -77,3 +85,13 @@ Entities set up from YAML are not grouped under a device (Home Assistant 2026.9+
 - Home Assistant 2026.9 compatibility: entities only attach to a device when they belong to a config entry (UI setup). YAML-configured entities no longer report `device_info`, which avoids the new "entity without config entry cannot attach a device" warning (this becomes an error in HA 2027.8).
 - Fixed a leftover debug string in the report-server status fallback (`UNKNOWN Tristan` → `UNKNOWN`).
 - Removed the unused `sensor.py` signal-strength platform. It was no longer loaded after 2.1.0 consolidated diagnostics into binary sensor attributes; `rssi` remains available as an attribute.
+
+## Release 2.3.2 highlights
+- Adjustable polling interval (`Configure` in the UI, or `scan_interval` in YAML). The default is now 5 seconds instead of a fixed 1 second, which cuts requests to the panel by 80%.
+- Fixed the report server never reaching the alarm entity with UI setup: the callback was looked up where only YAML setup stored the server.
+- Fixed report-server events updating the alarm entity from the server's own thread; they are now handed to Home Assistant's event loop.
+- Report codes without a mapping no longer clear the alarm state; they trigger an immediate refresh from the panel instead (useful because the UI setup has no report-code field).
+- The report server now releases its port on unload/reload, runs as a daemon thread, survives malformed frames, and no longer adds its own DEBUG log handler.
+- If the panel is unreachable when Home Assistant starts, setup is retried automatically (`ConfigEntryNotReady`) instead of failing permanently.
+- A rejected login (at setup or while polling) now starts Home Assistant's reauthentication flow, so you can enter new credentials without removing the integration.
+- The setup form now checks the credentials and panel version before creating the entry, and has English labels and error messages (`translations/en.json`).
