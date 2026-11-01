@@ -21,7 +21,7 @@ EVENT_TRUEGUARD_REPORT = "trueguard_report"
 _LOGGER = logging.getLogger(__name__)
 
 
-class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinate shared refreshes of Trueguard panel state and sensors.
 
     Each poll reads the alarm state and the sensor list at the same time.
@@ -57,9 +57,6 @@ class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def client(self) -> TrueguardClient:
         """The panel client."""
         return self._client
-
-    # Kept for entities written against the old name.
-    egardia_system = client
 
     def zone_name(self, zone: int | None) -> str | None:
         """Name of the sensor in a zone number, if known."""
@@ -104,7 +101,6 @@ class TrueguardSensorCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "group": report.group,
                 "zone": report.zone,
                 "zone_name": zone_name,
-                "status": report.legacy_status,
                 "config_entry_id": self.config_entry.entry_id if self.config_entry else None,
             },
         )

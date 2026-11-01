@@ -1,9 +1,8 @@
 """Receive alarm reports pushed by the panel (SIA DC-09 or raw Contact ID).
 
 Adapted from receiver.py in MRDonnii/trueguard-mz-home-assistant
-(MIT License, Copyright (c) 2026 Jan Thorn). Changes: also accepts the old
-Egardia "[ACCOUNT STATUS]" frames, and a failing report callback no longer
-drops the connection.
+(MIT License, Copyright (c) 2026 Jan Thorn). Change: a failing report
+callback no longer drops the connection.
 
 Point a free slot under the panel's "Rapport indst." at Home Assistant:
 
@@ -74,7 +73,7 @@ SIA_TO_CID: dict[str, tuple[str, str]] = {
 class PushReport:
     """One alarm report received from the panel."""
 
-    format: str  # "ADM-CID", "SIA-DCS", "NULL", "CID", or "LEGACY"
+    format: str  # "ADM-CID", "SIA-DCS", "NULL", or "CID"
     account: str = ""
     crc_format: str = "hex"  # DC-09 CRC as 4 hex digits, or "bin" (2 raw bytes, Climax)
     qualifier: str = ""
@@ -84,8 +83,6 @@ class PushReport:
     sia_code: str = ""
     sequence: str = ""
     raw: str = ""
-    # Old Egardia "[ACCOUNT STATUS]" frames: the text after the account.
-    legacy_status: str = ""
 
     @property
     def cid(self) -> str:
@@ -211,11 +208,6 @@ def parse_frame(raw: bytes) -> PushReport | None:
             zone=_int(cid.group("zone")),
             raw=text,
         )
-    if split is None and text.startswith("[") and " " in text:
-        # Old Egardia report server format, e.g. "[1234 ARM]".
-        status = text[text.index(" ") + 1 :].rstrip("]").strip()
-        if status:
-            return PushReport(format="LEGACY", legacy_status=status, raw=text)
     return None
 
 
@@ -277,7 +269,7 @@ class ReportReceiver:
                         "Ignored a Trueguard report for account %s", report.account
                     )
                     break
-                raw_frame = report.format in ("CID", "LEGACY")
+                raw_frame = report.format == "CID"
                 writer.write(ACK if raw_frame else dc09_ack(report))
                 await writer.drain()
                 try:

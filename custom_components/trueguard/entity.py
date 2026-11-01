@@ -59,6 +59,6 @@ class TrueguardEntity(CoordinatorEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, self._client.device_key)},
             name="Trueguard",
-            manufacturer="Trueguard / Woonveilig",
+            manufacturer="Trueguard",
             model=self._client.version,
         )

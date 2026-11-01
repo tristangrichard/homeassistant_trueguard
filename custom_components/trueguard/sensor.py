@@ -7,7 +7,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DOMAIN, EGARDIA_SENSOR_COORDINATOR
+from . import DATA_COORDINATOR, DOMAIN
 from .entity import TrueguardEntity
 from .parser import signal_level
 
@@ -18,7 +18,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up signal sensors from a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id][EGARDIA_SENSOR_COORDINATOR]
+    coordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
     data = coordinator.data or {}
     entities: list[SensorEntity] = []
     if "sig_gsm" in data.get("panel", {}):

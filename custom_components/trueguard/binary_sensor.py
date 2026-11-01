@@ -1,4 +1,4 @@
-"""Interfaces with Egardia/Woonveilig alarm control panel."""
+"""Binary sensors for Trueguard zones and panel status."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -8,16 +8,13 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import DOMAIN, EGARDIA_SENSOR_COORDINATOR
+from . import DATA_COORDINATOR, DOMAIN
 from .entity import TrueguardEntity
 from .parser import flag_ok
 
-EGARDIA_TYPE_TO_DEVICE_CLASS = {
+TYPE_TEXT_TO_DEVICE_CLASS = {
     "PIR kamera": BinarySensorDeviceClass.MOTION,
     "Dørkontakt": BinarySensorDeviceClass.DOOR,
     "Røg alarm": BinarySensorDeviceClass.SMOKE,
@@ -28,7 +25,7 @@ EGARDIA_TYPE_TO_DEVICE_CLASS = {
     "Power Switch Meter": BinarySensorDeviceClass.POWER,
 }
 
-EGARDIA_TYPE_CODE_TO_DEVICE_CLASS = {
+TYPE_CODE_TO_DEVICE_CLASS = {
     4: BinarySensorDeviceClass.DOOR,
     11: BinarySensorDeviceClass.SMOKE,
     27: BinarySensorDeviceClass.MOTION,
@@ -58,12 +55,12 @@ def _resolve_device_class(sensor_data):
     """Resolve a Home Assistant device class from panel sensor data."""
     type_code = _sensor_type_code(sensor_data)
 
-    if type_code in EGARDIA_TYPE_CODE_TO_DEVICE_CLASS:
-        return EGARDIA_TYPE_CODE_TO_DEVICE_CLASS[type_code]
+    if type_code in TYPE_CODE_TO_DEVICE_CLASS:
+        return TYPE_CODE_TO_DEVICE_CLASS[type_code]
 
     type_name = _sensor_type_text(sensor_data)
-    if type_name in EGARDIA_TYPE_TO_DEVICE_CLASS:
-        return EGARDIA_TYPE_TO_DEVICE_CLASS[type_name]
+    if type_name in TYPE_TEXT_TO_DEVICE_CLASS:
+        return TYPE_TEXT_TO_DEVICE_CLASS[type_name]
 
     return None
 
@@ -99,125 +96,57 @@ def _resolve_icon(sensor_data, is_on, device_class, entity_name: str | None = No
     )
 
 
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> None:
-    """Initialize the platform."""
-    if discovery_info is None:
-        return
-
-    coordinator = hass.data.get(EGARDIA_SENSOR_COORDINATOR)
-    if coordinator is None:
-        return
-    async_add_entities(_build_entities(coordinator), False)
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Trueguard binary sensors from config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id][EGARDIA_SENSOR_COORDINATOR]
+    """Set up Trueguard binary sensors from a config entry."""
+    coordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
     async_add_entities(
-        _build_entities(coordinator)
+        _build_zone_entities(coordinator)
         + _build_panel_entities(coordinator)
-        + _build_zone_problem_entities(coordinator),
-        False,
+        + _build_zone_problem_entities(coordinator)
     )
 
 
-def _build_entities(coordinator):
-    """Build all binary entities from discovered sensor payloads."""
+# --- Zones (door, motion, smoke, ...) --------------------------------------------
+
+def _build_zone_entities(coordinator):
+    """One sensor per zone in the panel's device list."""
     sensors = (coordinator.data or {}).get("sensors", {})
-    system = coordinator.egardia_system
     return [
-        EgardiaBinarySensor(
-            coordinator=coordinator,
-            sensor_id=sensors[sensor]["id"],
-            name=sensors[sensor]["name"],
-            egardia_system=system,
-            sensor_data=sensors[sensor],
-            device_class=_resolve_device_class(sensors[sensor]),
-        )
-        for sensor in sensors
+        TrueguardZoneSensor(coordinator, sensor_id, sensor)
+        for sensor_id, sensor in sensors.items()
     ]
 
 
-class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Represents a sensor based on an Egardia sensor (IR, Door Contact)."""
+class TrueguardZoneSensor(TrueguardEntity, BinarySensorEntity):
+    """A zone such as a door contact, motion detector, or smoke alarm."""
 
-    def __init__(
-        self,
-        coordinator,
-        sensor_id,
-        name,
-        egardia_system,
-        sensor_data,
-        device_class,
-    ):
-        """Initialize the sensor device."""
-        super().__init__(coordinator)
+    def __init__(self, coordinator, sensor_id, sensor_data) -> None:
         self._id = sensor_id
-        self._attr_name = name
-        self._attr_unique_id = f"trueguard_{sensor_id}"
-        self._attr_device_class = device_class
-        self._attr_is_on = None
-        self._egardia_system = egardia_system
         self._sensor_data = sensor_data
-        self._last_written = None
-        self._attr_icon = _resolve_icon(
-            self._sensor_data,
-            self._attr_is_on,
-            self._attr_device_class,
-            self._attr_name,
-        )
-        self._sync_from_coordinator()
+        self._attr_name = sensor_data.get("name")
+        self._attr_unique_id = f"trueguard_{sensor_id}"
+        self._attr_device_class = _resolve_device_class(sensor_data)
+        super().__init__(coordinator)
 
-    def _sync_from_coordinator(self) -> None:
-        """Apply latest cached sensor payload from coordinator."""
-        latest = ((self.coordinator.data or {}).get("sensors", {})).get(
-            self._id, self._sensor_data
-        )
+    def _refresh(self) -> None:
+        latest = self._data.get("sensors", {}).get(self._id, self._sensor_data)
         self._sensor_data = latest
-        is_on = self._egardia_system.sensor_is_on(latest)
+        is_on = self._client.sensor_is_on(latest)
         self._attr_is_on = bool(is_on) if is_on is not None else None
         self._attr_icon = _resolve_icon(
-            self._sensor_data,
-            self._attr_is_on,
-            self._attr_device_class,
-            self._attr_name,
+            self._sensor_data, self._attr_is_on, self._attr_device_class, self._attr_name
         )
 
-    @property
-    def icon(self):
-        """Return icon when no native device class icon is available."""
-        return self._attr_icon
-
-    @property
-    def should_poll(self) -> bool:
-        """Coordinator handles refreshes."""
-        return False
-
-    @property
-    def device_info(self) -> DeviceInfo | None:
-        """Return device information for device registry."""
-        # Only config-entry entities may attach to a device (HA 2026.9+).
-        if self.platform is None or self.platform.config_entry is None:
-            return None
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._egardia_system.device_key)},
-            name="Trueguard",
-            manufacturer="Trueguard / Woonveilig",
-            model=self._egardia_system.version,
-        )
+    def _value(self):
+        return (self._attr_is_on, dict(self._sensor_data or {}))
 
     @property
     def extra_state_attributes(self):
-        """Return extra state attributes."""
+        """Raw panel values for this zone."""
         sensor = self._sensor_data or {}
         return {
             "panel_sensor_id": sensor.get("id"),
@@ -235,26 +164,6 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "firmware_version": sensor.get("ver"),
         }
 
-    def _snapshot(self):
-        return (self.available, self._attr_is_on, dict(self._sensor_data or {}))
-
-    async def async_added_to_hass(self) -> None:
-        """Remember the state Home Assistant writes when the entity is added."""
-        await super().async_added_to_hass()
-        self._last_written = self._snapshot()
-
-    def _handle_coordinator_update(self) -> None:
-        """Handle coordinator updates.
-
-        The coordinator only calls this when some sensor changed; write state
-        only if this sensor's data or the availability changed.
-        """
-        self._sync_from_coordinator()
-        snapshot = self._snapshot()
-        if snapshot == self._last_written:
-            return
-        self._last_written = snapshot
-        self.async_write_ha_state()
 
 # --- Panel status (panelCondGet "updates") ------------------------------------
 

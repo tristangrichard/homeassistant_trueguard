@@ -1,4 +1,4 @@
-"""Interfaces with Egardia/Woonveilig alarm control panel."""
+"""Trueguard alarm panels (Climax-based) for Home Assistant."""
 from __future__ import annotations
 
 import logging
@@ -6,10 +6,7 @@ import socket
 
 import voluptuous as vol
 
-from .api import TrueguardClient, VersionError
-from .coordinator import TrueguardSensorCoordinator
-from .receiver import ReportReceiver
-
+from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import (
     CONF_HOST,
     CONF_NAME,
@@ -22,17 +19,19 @@ from homeassistant.const import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import discovery
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
+from .api import TrueguardClient, VersionError
+from .coordinator import TrueguardCoordinator
+from .receiver import ReportReceiver
+
 _LOGGER = logging.getLogger(__name__)
 
-ATTR_DISCOVER_DEVICES = "egardia_sensor"
-
-CONF_REPORT_SERVER_CODES = "report_server_codes"
 CONF_REPORT_SERVER_ENABLED = "report_server_enabled"
 CONF_REPORT_SERVER_PORT = "report_server_port"
 # Optional account number the panel reports with; blank accepts any.
@@ -62,27 +61,14 @@ MAX_SCAN_INTERVAL = 3600
 DOMAIN = "trueguard"
 PLATFORMS = [Platform.ALARM_CONTROL_PANEL, Platform.BINARY_SENSOR, Platform.SENSOR]
 
-EGARDIA_DEVICE = "trueguarddevice"
-EGARDIA_NAME = "egardianame"
-EGARDIA_REPORT_SERVER_CODES = "egardia_rs_codes"
-EGARDIA_REPORT_SERVER_ENABLED = "egardia_rs_enabled"
-EGARDIA_SERVER = "egardia_server"
-EGARDIA_SENSOR_COORDINATOR = "egardia_sensor_coordinator"
+# Keys in hass.data[DOMAIN][entry_id].
+DATA_CLIENT = "client"
+DATA_COORDINATOR = "coordinator"
+DATA_RECEIVER = "receiver"
 
-NOTIFICATION_ID = "trueguard_notification"
-NOTIFICATION_TITLE = "Trueguard"
-
-REPORT_SERVER_CODES_IGNORE = "ignore"
-
-SERVER_CODE_SCHEMA = vol.Schema(
-    {
-        vol.Optional("arm"): vol.All(cv.ensure_list_csv, [cv.string]),
-        vol.Optional("disarm"): vol.All(cv.ensure_list_csv, [cv.string]),
-        vol.Optional("armhome"): vol.All(cv.ensure_list_csv, [cv.string]),
-        vol.Optional("triggered"): vol.All(cv.ensure_list_csv, [cv.string]),
-        vol.Optional("ignore"): vol.All(cv.ensure_list_csv, [cv.string]),
-    }
-)
+# YAML setup was removed in 2.6.0. A "trueguard:" block is imported into a
+# config entry once, and a repair issue asks the user to remove it.
+CONF_REPORT_SERVER_CODES = "report_server_codes"
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -100,7 +86,8 @@ CONFIG_SCHEMA = vol.Schema(
                     vol.Coerce(float),
                     vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
                 ),
-                vol.Optional(CONF_REPORT_SERVER_CODES, default={}): SERVER_CODE_SCHEMA,
+                # No longer used; accepted so old configs still validate.
+                vol.Optional(CONF_REPORT_SERVER_CODES): dict,
                 vol.Optional(
                     CONF_REPORT_SERVER_ENABLED, default=DEFAULT_REPORT_SERVER_ENABLED
                 ): cv.boolean,
@@ -115,13 +102,47 @@ CONFIG_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Trueguard platform."""
-    if DOMAIN not in config:
-        return True
-
-    conf = dict(config[DOMAIN])
-    await _async_setup_from_conf(hass, conf, config)
+    """Import an old YAML configuration into a config entry, once."""
+    if DOMAIN in config:
+        hass.async_create_task(_async_import_yaml(hass, dict(config[DOMAIN])))
     return True
+
+
+async def _async_import_yaml(hass: HomeAssistant, conf: dict) -> None:
+    """Start the import flow and raise a repair issue about the YAML block."""
+    if conf.get(CONF_REPORT_SERVER_CODES):
+        _LOGGER.warning(
+            "Trueguard report_server_codes is no longer used: the push receiver "
+            "understands the panel's SIA / Contact ID reports by itself"
+        )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_IMPORT}, data=conf
+    )
+    imported = result.get("type") is FlowResultType.CREATE_ENTRY or (
+        result.get("type") is FlowResultType.ABORT
+        and result.get("reason") == "already_configured"
+    )
+    if imported:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            "deprecated_yaml",
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="deprecated_yaml",
+        )
+    else:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            "yaml_import_failed",
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="yaml_import_failed",
+            translation_placeholders={"reason": str(result.get("reason", "unknown"))},
+        )
 
 
 def device_key(conf: dict) -> str:
@@ -146,18 +167,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     conf[CONF_REPORT_ACCOUNT] = entry_setting(entry, CONF_REPORT_ACCOUNT, "")
     conf.setdefault(CONF_NAME, DEFAULT_NAME)
-    conf.setdefault(CONF_REPORT_SERVER_CODES, {})
     try:
-        device = _create_client(hass, conf)
+        client = _create_client(hass, conf)
     except VersionError as err:
         raise ConfigEntryError(str(err)) from err
 
     # The first refresh is the connection check: an unreachable panel raises
     # ConfigEntryNotReady (setup is retried), a rejected login starts
     # reauthentication, and a wrong panel version fails the entry.
-    coordinator = TrueguardSensorCoordinator(
+    coordinator = TrueguardCoordinator(
         hass,
-        device,
+        client,
         config_entry=entry,
         interval_seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
@@ -181,9 +201,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
-        EGARDIA_DEVICE: device,
-        EGARDIA_SERVER: server,
-        EGARDIA_SENSOR_COORDINATOR: coordinator,
+        DATA_CLIENT: client,
+        DATA_RECEIVER: server,
+        DATA_COORDINATOR: coordinator,
         "conf": conf,
     }
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
@@ -207,7 +227,7 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     ):
         hass.config_entries.async_schedule_reload(entry.entry_id)
         return
-    coordinator = entry_data[EGARDIA_SENSOR_COORDINATOR]
+    coordinator = entry_data[DATA_COORDINATOR]
     coordinator.set_interval(
         entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
     )
@@ -220,71 +240,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     entry_data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
-    server = entry_data.get(EGARDIA_SERVER)
+    server = entry_data.get(DATA_RECEIVER)
     if server is not None:
         # Wait for the port to be released so a reload can bind it again.
         await _async_stop_server(hass, server)
     if DOMAIN in hass.data and not hass.data[DOMAIN]:
         hass.data.pop(DOMAIN)
-    return True
-
-
-async def _async_setup_from_conf(
-    hass: HomeAssistant, conf: dict, full_config: ConfigType
-) -> bool:
-    """Initialize integration from YAML configuration."""
-    conf.setdefault(CONF_NAME, DEFAULT_NAME)
-    conf.setdefault(CONF_REPORT_SERVER_CODES, {})
-    try:
-        device = _create_client(hass, conf)
-    except VersionError as err:
-        _LOGGER.error("%s", err)
-        return False
-
-    coordinator = TrueguardSensorCoordinator(
-        hass,
-        device,
-        config_entry=None,
-        interval_seconds=conf.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-    )
-    # async_config_entry_first_refresh is only for coordinators with an entry.
-    await coordinator.async_refresh()
-    if not coordinator.last_update_success:
-        _LOGGER.error(
-            "Could not read your Trueguard panel. Check host, credentials and "
-            "version: %s",
-            coordinator.last_exception,
-        )
-        return False
-
-    try:
-        server = await _async_start_report_server(hass, conf, coordinator)
-    except OSError:
-        _LOGGER.error("Binding error occurred while starting EgardiaServer")
-        return False
-
-    hass.data[EGARDIA_DEVICE] = device
-    hass.data[EGARDIA_SENSOR_COORDINATOR] = coordinator
-    if server is not None:
-        hass.data[EGARDIA_SERVER] = server
-
-        async def _async_handle_stop(event) -> None:
-            await _async_stop_server(hass, server)
-
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_handle_stop)
-
-    hass.async_create_task(
-        discovery.async_load_platform(
-            hass, Platform.ALARM_CONTROL_PANEL, DOMAIN, discovered=conf, hass_config=full_config
-        )
-    )
-
-    hass.async_create_task(
-        discovery.async_load_platform(
-            hass, Platform.BINARY_SENSOR, DOMAIN, {ATTR_DISCOVER_DEVICES: None}, full_config
-        )
-    )
-
     return True
 
 

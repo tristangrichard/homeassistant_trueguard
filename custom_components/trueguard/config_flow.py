@@ -264,6 +264,33 @@ class TrueguardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reconfigure", data_schema=schema, errors=errors
         )
 
+    async def async_step_import(self, import_data: Mapping[str, Any]):
+        """Import an old YAML "trueguard:" block into a config entry, once."""
+        data = {
+            CONF_NAME: import_data.get(CONF_NAME, DEFAULT_NAME),
+            CONF_HOST: import_data[CONF_HOST],
+            CONF_PORT: import_data.get(CONF_PORT, DEFAULT_PORT),
+            CONF_USERNAME: import_data[CONF_USERNAME],
+            CONF_PASSWORD: import_data[CONF_PASSWORD],
+            CONF_VERSION: str(import_data.get(CONF_VERSION, DEFAULT_VERSION)).upper(),
+            CONF_REPORT_SERVER_ENABLED: import_data.get(
+                CONF_REPORT_SERVER_ENABLED, DEFAULT_REPORT_SERVER_ENABLED
+            ),
+            CONF_REPORT_SERVER_PORT: import_data.get(
+                CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT
+            ),
+        }
+        await self.async_set_unique_id(f"{data[CONF_HOST]}:{data[CONF_PORT]}")
+        self._abort_if_unique_id_configured()
+        if (error := await self._async_validate(data)) is not None:
+            return self.async_abort(reason=error)
+        options = {}
+        if CONF_SCAN_INTERVAL in import_data:
+            options[CONF_SCAN_INTERVAL] = float(import_data[CONF_SCAN_INTERVAL])
+        return self.async_create_entry(
+            title=data[CONF_NAME], data=data, options=options
+        )
+
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
         """Start reauthentication after the panel rejected the login."""
         return await self.async_step_reauth_confirm()

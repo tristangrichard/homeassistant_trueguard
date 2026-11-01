@@ -1,7 +1,8 @@
 # Trueguard Home Assistant Integration
 
-Custom integration for connecting Trueguard / Woonveilig alarm systems to Home Assistant.
-The project is based on the Egardia integration and adapted for Trueguard variants.
+Custom integration for connecting Trueguard (Climax-based) alarm panels to Home Assistant.
+It started as a fork of Home Assistant's Egardia integration; since 2.6.0 none
+of that code remains.
 
 ## What's included
 - Alarm control panel entity (arm away, arm home, disarm).
@@ -98,20 +99,13 @@ trigger:
       cid: "1111"   # smoke alarm
 ```
 
-The old Egardia `[ACCOUNT STATUS]` format still works with the YAML
-`report_server_codes` mapping.
-
-### Legacy YAML setup (still supported)
-```yaml
-trueguard:
-  host: YOUR_HOST
-  username: YOUR_USERNAME
-  password: YOUR_PASSWORD
-  version: SMARTHOME
-  scan_interval: 5  # optional, seconds (1-3600)
-```
-
-Entities set up from YAML are not grouped under a device (Home Assistant 2026.9+ only allows config-entry entities to attach to devices). If you migrate from YAML to UI setup, remove the YAML block after successful UI setup to avoid duplicate setup.
+### YAML setup (removed)
+YAML setup was removed in 2.6.0. If your `configuration.yaml` still has a
+`trueguard:` block, it is imported into the UI setup once (host, login, panel
+version, polling interval, and report server settings are kept), and Home
+Assistant shows a notice under **Settings -> Repairs** asking you to remove the
+block. `report_server_codes` is no longer used: the push receiver understands
+the panel's SIA / Contact ID reports by itself.
 
 ## Supported panel versions
 `WV-1716`, `GATE-01`, `GATE-02`, `GATE-03`, `SMARTHOME`
@@ -186,3 +180,9 @@ Entities set up from YAML are not grouped under a device (Home Assistant 2026.9+
 - Optional account number for the receiver under **Configure**.
 - DHCP discovery of Climax panels (MAC prefix `00:1D:94`). A panel set up with an IP address is followed when its address changes; device and entity IDs stay the same.
 - Diagnostics download with credentials, MAC, and account redacted.
+
+## Release 2.6.0 highlights
+- YAML setup removed. An existing `trueguard:` block is imported into a config entry once, and a Repairs notice asks you to remove it. If the import fails (for example a wrong password), a Repairs notice says why.
+- The YAML-only `report_server_codes` mapping and the old Egardia `[ACCOUNT STATUS]` report format are gone; use the SIA / Contact ID push receiver.
+- All remaining Egardia code names removed (`TrueguardAlarm`, `TrueguardZoneSensor`, `TrueguardCoordinator`). Entity and device IDs are unchanged.
+- `manifest.json` now lists this repository as the documentation and issue tracker, with @tristangrichard as code owner. Removed the outdated `requirements.txt`.

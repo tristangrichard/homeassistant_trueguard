@@ -2,19 +2,20 @@
   "domain": "trueguard",
   "name": "Trueguard",
   "codeowners": [
-    "@jeroenterheerdt"
+    "@tristangrichard"
   ],
-  "documentation": "https://www.home-assistant.io/integrations/egardia",
   "config_flow": true,
-  "integration_type": "device",
-  "iot_class": "local_polling",
-  "loggers": [
-    "custom_components.trueguard"
-  ],
-  "version": "2.5.0",
   "dhcp": [
     {
       "macaddress": "001D94*"
     }
-  ]
+  ],
+  "documentation": "https://github.com/tristangrichard/homeassistant_trueguard",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/tristangrichard/homeassistant_trueguard/issues",
+  "loggers": [
+    "custom_components.trueguard"
+  ],
+  "version": "2.6.0"
 }

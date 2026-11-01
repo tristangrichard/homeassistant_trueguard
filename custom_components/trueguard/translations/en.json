@@ -54,7 +54,11 @@
     "abort": {
       "already_configured": "This panel is already configured.",
       "reauth_successful": "Signed in again.",
-      "reconfigure_successful": "The panel settings were updated."
+      "reconfigure_successful": "The panel settings were updated.",
+      "invalid_auth": "Wrong username or password.",
+      "cannot_connect": "Could not reach the panel.",
+      "wrong_version": "The panel did not answer as the configured panel version.",
+      "unknown": "Unexpected error."
     },
     "flow_title": "Trueguard ({host})"
   },
@@ -70,6 +74,16 @@
           "report_server_account": "Account number (optional, blank accepts any)"
         }
       }
+    }
+  },
+  "issues": {
+    "deprecated_yaml": {
+      "title": "Trueguard YAML configuration is no longer used",
+      "description": "Your `trueguard:` YAML configuration was imported into the Trueguard integration, which you can now change under Settings > Devices & services. Remove the `trueguard:` block from configuration.yaml and restart Home Assistant to fix this issue."
+    },
+    "yaml_import_failed": {
+      "title": "Trueguard YAML configuration could not be imported",
+      "description": "Your `trueguard:` YAML configuration could not be imported ({reason}). Set up Trueguard under Settings > Devices & services > Add integration, then remove the `trueguard:` block from configuration.yaml and restart Home Assistant."
     }
   }
 }

@@ -68,9 +68,8 @@ def test_raw_contact_id():
     assert (report.format, report.cid, report.zone) == ("CID", "1130", 15)
 
 
-def test_legacy_egardia_frame():
-    report = R.parse_frame(b"[1234 ARM]")
-    assert (report.format, report.legacy_status) == ("LEGACY", "ARM")
+def test_unknown_frame_ignored():
+    assert R.parse_frame(b"[1234 ARM]") is None
 
 
 def test_ack_echoes_sequence_and_account():
