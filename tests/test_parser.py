@@ -197,3 +197,29 @@ def test_real_smarthome_sensor_list(wrap):
     assert P.sensor_is_on(door, "SMARTHOME") is False
     assert P.sensor_is_on({**door, "st": 3, "status": "Lås op"}, "SMARTHOME") is True
     assert all(P.sensor_is_on(s, "SMARTHOME") is False for s in sensors.values())
+
+
+def test_real_smarthome_panel_status():
+    text = (FIXTURES / "smarthome_panelcondget.txt").read_text(encoding="utf-8")
+    state, panel = P.parse_panel_status(text, "SMARTHOME")
+    assert state == "DISARM"
+    assert panel["battery_ok"] == "1"
+    assert panel["ac_activation"] == "Normal"
+    assert panel["sig_gsm"] == "9"
+    assert "pcondform1" not in panel  # nested forms are left out
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1", True), ("0", False), (1, True), ("", None), (None, None)],
+)
+def test_flag_ok(value, expected):
+    assert P.flag_ok(value) is expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("Stærk, 7", 7), ("God, 5", 5), ("N/A", None), ("9", 9), (3, 3), (None, None)],
+)
+def test_signal_level(value, expected):
+    assert P.signal_level(value) == expected

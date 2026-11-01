@@ -1,6 +1,7 @@
 """Interfaces with Trueguard/Woonveilig alarm control panel."""
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 
 import homeassistant.components.alarm_control_panel as alarm
@@ -15,8 +16,10 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import (
     CONF_REPORT_SERVER_CODES,
@@ -25,13 +28,17 @@ from . import (
     DOMAIN,
     EGARDIA_DEVICE,
     EGARDIA_SENSOR_COORDINATOR,
-    EGARDIA_SERVER,
     REPORT_SERVER_CODES_IGNORE,
     device_key,
 )
 from .api import TrueguardError
+from .reports import action_for
 
 _LOGGER = logging.getLogger(__name__)
+
+# A reported alarm shows as triggered at most this long without a restore,
+# arm, or disarm.
+TRIGGERED_MAX = timedelta(hours=1)
 
 STATES = {
     "ARM": AlarmControlPanelState.ARMED_AWAY,
@@ -41,6 +48,13 @@ STATES = {
     "HOME": AlarmControlPanelState.ARMED_HOME,
     "NIGHT HOME": AlarmControlPanelState.ARMED_NIGHT,
     "TRIGGERED": AlarmControlPanelState.TRIGGERED,
+}
+
+# Arm/disarm reports (see reports.action_for) to alarm states.
+REPORT_STATES = {
+    "disarm": AlarmControlPanelState.DISARMED,
+    "arm_away": AlarmControlPanelState.ARMED_AWAY,
+    "arm_home": AlarmControlPanelState.ARMED_HOME,
 }
 
 
@@ -66,7 +80,6 @@ async def async_setup_platform(
         discovery_info.get(CONF_REPORT_SERVER_CODES),
         discovery_info[CONF_REPORT_SERVER_PORT],
         unique_id=f"trueguard_{device_key(discovery_info)}",
-        server=hass.data.get(EGARDIA_SERVER),
     )
 
     async_add_entities([device], True)
@@ -88,7 +101,6 @@ async def async_setup_entry(
         conf.get(CONF_REPORT_SERVER_CODES),
         conf.get(CONF_REPORT_SERVER_PORT, 52010),
         unique_id=f"trueguard_{device_key(conf)}",
-        server=entry_data.get(EGARDIA_SERVER),
     )
     async_add_entities([device], False)
 
@@ -112,7 +124,6 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
         rs_codes=None,
         rs_port=52010,
         unique_id=None,
-        server=None,
     ):
         """Initialize the Egardia alarm."""
         super().__init__(coordinator)
@@ -122,25 +133,42 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
         self._rs_enabled = rs_enabled
         self._rs_codes = rs_codes or {}
         self._rs_port = rs_port
-        self._server = server
         self._last_written = None
+        self._polled_state: AlarmControlPanelState | None = None
+        self._triggered: dict | None = None
+        self._last_alarm: dict | None = None
+        self._cancel_expiry = None
         self._apply_panel_state((self.coordinator.data or {}).get("state"))
 
     async def async_added_to_hass(self) -> None:
-        """Add Egardiaserver callback if enabled."""
+        """Listen for reports pushed by the panel."""
         await super().async_added_to_hass()
         # Home Assistant writes the initial state when the entity is added.
-        self._last_written = (self.available, self._attr_alarm_state)
-        server = self._server
-        if self._rs_enabled and server is not None:
-            _LOGGER.debug("Registering callback to Egardiaserver")
-            server.register_callback(self.handle_status_event)
+        self._last_written = self._snapshot()
+        if self._rs_enabled:
+            self.async_on_remove(
+                self.coordinator.async_add_report_listener(self._async_handle_report)
+            )
+        self.async_on_remove(self._cancel_expiry_timer)
 
-            def _unregister() -> None:
-                if self.handle_status_event in server.callbacks:
-                    server.callbacks.remove(self.handle_status_event)
+    def _cancel_expiry_timer(self) -> None:
+        if self._cancel_expiry is not None:
+            self._cancel_expiry()
+            self._cancel_expiry = None
 
-            self.async_on_remove(_unregister)
+    def _start_expiry_timer(self) -> None:
+        """Clear a reported alarm after TRIGGERED_MAX even if nothing else changes."""
+        self._cancel_expiry_timer()
+
+        @callback
+        def _expire(_now) -> None:
+            self._cancel_expiry = None
+            self._update_state()
+            self._write_if_changed()
+
+        self._cancel_expiry = async_call_later(
+            self.hass, TRIGGERED_MAX.total_seconds() + 1, _expire
+        )
 
     @property
     def should_poll(self) -> bool:
@@ -160,29 +188,75 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
             model=self._egardiasystem.version,
         )
 
-    def handle_status_event(self, event):
-        """Handle a report from the panel.
+    @property
+    def extra_state_attributes(self):
+        """The newest alarm reported by the panel's push reports."""
+        if self._last_alarm is None:
+            return None
+        return dict(self._last_alarm)
 
-        Called from the report server's own thread, so hand the event over to
-        Home Assistant's event loop before touching entity state.
-        """
-        if self.hass is None:
-            return
-        self.hass.loop.call_soon_threadsafe(self._async_handle_status_event, event)
+    # --- Push reports -------------------------------------------------------------
 
     @callback
-    def _async_handle_status_event(self, event) -> None:
-        """Apply a panel report on the event loop."""
-        if (statuscode := event.get("status")) is None:
+    def _async_handle_report(self, report, zone_name: str | None) -> None:
+        """Apply a report pushed by the panel (runs on the event loop)."""
+        if report.format == "LEGACY":
+            self._handle_legacy_status(report.legacy_status)
             return
+
+        action = action_for(report.qualifier, report.code, report.zone)
+        if action.kind == "alarm":
+            self._last_alarm = {
+                "alarm_cause": action.description,
+                "alarm_code": report.cid,
+                "alarm_zone": report.zone,
+                "alarm_zone_name": zone_name,
+                "alarm_time": dt_util.utcnow().isoformat(),
+            }
+            self._triggered = {
+                "code": action.code,
+                "zone": action.zone,
+                "burglary": action.burglary,
+                "mode": self._polled_state,
+                "until": dt_util.utcnow() + TRIGGERED_MAX,
+            }
+            self._start_expiry_timer()
+        elif action.kind == "restore":
+            if (
+                self._triggered is not None
+                and not self._triggered["burglary"]
+                and self._triggered["code"] == action.code
+                and self._triggered["zone"] == action.zone
+            ):
+                self._triggered = None
+        elif action.kind in REPORT_STATES:
+            self._triggered = None
+            self._polled_state = REPORT_STATES[action.kind]
+        else:
+            return
+        self._update_state()
+        self._write_if_changed()
+
+    def _handle_legacy_status(self, statuscode: str) -> None:
+        """Old Egardia frames: map the status with the YAML report_server_codes."""
         status = self.lookupstatusfromcode(statuscode)
-        if status == "UNKNOWN" or STATES.get(status) is None:
-            # No mapping for this code: ask the panel for its state now
-            # instead of waiting for the next poll.
-            _LOGGER.debug("Report code %s not mapped, refreshing", statuscode)
-            self.hass.async_create_task(self.coordinator.async_request_refresh())
+        new_state = STATES.get(status)
+        if new_state is None:
+            _LOGGER.debug("Report code %s not mapped", statuscode)
             return
-        self._apply_panel_state(status)
+        if new_state == AlarmControlPanelState.TRIGGERED:
+            self._triggered = {
+                "code": "",
+                "zone": None,
+                "burglary": True,
+                "mode": self._polled_state,
+                "until": dt_util.utcnow() + TRIGGERED_MAX,
+            }
+            self._start_expiry_timer()
+        else:
+            self._triggered = None
+            self._polled_state = new_state
+        self._update_state()
         self._write_if_changed()
 
     def lookupstatusfromcode(self, statuscode):
@@ -198,23 +272,40 @@ class EgardiaAlarm(CoordinatorEntity, alarm.AlarmControlPanelEntity):
         )
         return status
 
+    # --- State -------------------------------------------------------------------------
+
     def _apply_panel_state(self, status):
-        """Parse the status."""
+        """Apply the alarm mode read from the panel."""
         if status is None:
             return
-        _LOGGER.debug("Parsing status %s", status)
-        # Ignore the statuscode if it is IGNORE
-        if status.lower().strip() != REPORT_SERVER_CODES_IGNORE:
-            _LOGGER.debug("Not ignoring status %s", status)
-            newstatus = STATES.get(status.upper())
-            _LOGGER.debug("newstatus %s", newstatus)
-            self._attr_alarm_state = newstatus
+        if status.lower().strip() == REPORT_SERVER_CODES_IGNORE:
+            return
+        polled = STATES.get(status.upper())
+        if (
+            self._triggered is not None
+            and polled is not None
+            and polled != self._triggered["mode"]
+        ):
+            # Armed or disarmed since the alarm: the alarm is over.
+            self._triggered = None
+        self._polled_state = polled
+        self._update_state()
+
+    def _update_state(self) -> None:
+        """Show triggered while a reported alarm is active, else the panel mode."""
+        if self._triggered is not None and dt_util.utcnow() >= self._triggered["until"]:
+            self._triggered = None
+        if self._triggered is not None:
+            self._attr_alarm_state = AlarmControlPanelState.TRIGGERED
         else:
-            _LOGGER.debug("Ignoring status")
+            self._attr_alarm_state = self._polled_state
+
+    def _snapshot(self):
+        return (self.available, self._attr_alarm_state, tuple((self._last_alarm or {}).items()))
 
     def _write_if_changed(self) -> None:
         """Write state only when the alarm state or availability changed."""
-        snapshot = (self.available, self._attr_alarm_state)
+        snapshot = self._snapshot()
         if snapshot == self._last_written:
             return
         self._last_written = snapshot

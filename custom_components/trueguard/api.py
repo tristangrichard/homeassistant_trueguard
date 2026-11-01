@@ -18,7 +18,7 @@ from .parser import (
     VersionError,
     is_unauthorized,
     parse_command_result,
-    parse_panel_state,
+    parse_panel_status,
     parse_sensor_list,
     sensor_is_on,
     sensor_list_action,
@@ -152,9 +152,15 @@ class TrueguardClient:
 
     # --- Reads --------------------------------------------------------------------
 
+    async def async_get_panel(self) -> tuple[str, dict[str, Any]]:
+        """Return the alarm mode and the panel's status values."""
+        return parse_panel_status(
+            await self._request("GET", "panelCondGet"), self._version
+        )
+
     async def async_get_state(self) -> str:
         """Return the alarm mode: ARM, HOME, DISARM, ... or UNKNOWN."""
-        return parse_panel_state(await self._request("GET", "panelCondGet"), self._version)
+        return (await self.async_get_panel())[0]
 
     async def async_get_sensors(self) -> dict[Any, dict[str, Any]]:
         """Return the sensors keyed by id."""
@@ -164,7 +170,7 @@ class TrueguardClient:
     async def async_get_data(self) -> dict[str, Any]:
         """Read alarm state and sensors at the same time."""
         results = await asyncio.gather(
-            self.async_get_state(), self.async_get_sensors(), return_exceptions=True
+            self.async_get_panel(), self.async_get_sensors(), return_exceptions=True
         )
         errors = [r for r in results if isinstance(r, BaseException)]
         if errors:
@@ -173,8 +179,8 @@ class TrueguardClient:
                 if isinstance(err, UnauthorizedError):
                     raise err
             raise errors[0]
-        state, sensors = results
-        return {"state": state, "sensors": sensors}
+        (state, panel), sensors = results
+        return {"state": state, "panel": panel, "sensors": sensors}
 
     def sensor_is_on(self, sensor: dict[str, Any] | None) -> bool | None:
         """Return whether a sensor is open/triggered for this panel version."""

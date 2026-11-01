@@ -210,14 +210,31 @@ def _state_key(version: str) -> str:
 
 def parse_panel_state(text: str, version: str) -> str:
     """Return the alarm mode (ARM, HOME, DISARM, ...) from a panelCondGet answer."""
+    return parse_panel_status(text, version)[0]
+
+
+def parse_panel_status(text: str, version: str) -> tuple[str, dict[str, Any]]:
+    """Return the alarm mode and the panel's status values from panelCondGet.
+
+    The status values are the flat "updates" block, for example
+    {"battery_ok": "1", "tamper_ok": "1", "sig_gsm": "9", ...}.
+    """
     if is_unauthorized(text):
         raise UnauthorizedError("The panel rejected the login")
     key = _state_key(version)
     raw: Any = None
+    panel: dict[str, Any] = {}
     try:
-        raw = find_key(loads_panel_json(text), key)
+        data = loads_panel_json(text)
     except PanelParseError:
-        raw = None
+        data = None
+    if data is not None:
+        raw = find_key(data, key)
+        updates = find_key(data, "updates")
+        if isinstance(updates, dict):
+            panel = {
+                k: v for k, v in updates.items() if not isinstance(v, (dict, list))
+            }
     if raw is None:
         # Fall back to a direct search if the object could not be parsed.
         match = re.search(rf'"?{key}"?\s*:\s*"([^"]*)"', text)
@@ -227,10 +244,30 @@ def parse_panel_state(text: str, version: str) -> str:
 
     status = str(raw).strip().upper()
     if version == "GATE-03":
-        return GATE03_STATES_MAPPING.get(status, "UNKNOWN")
-    if version == DEVICE_SMART_HOME:
-        return SMARTHOME_STATES_MAPPING.get(status, "UNKNOWN")
-    return status
+        status = GATE03_STATES_MAPPING.get(status, "UNKNOWN")
+    elif version == DEVICE_SMART_HOME:
+        status = SMARTHOME_STATES_MAPPING.get(status, "UNKNOWN")
+    return status, panel
+
+
+def flag_ok(value: Any) -> bool | None:
+    """Read a panel "_ok" flag: "1" means normal, "0" means a problem."""
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value).strip() == "1"
+
+
+_SIGNAL_NUMBER = re.compile(r"(-?\d+)\s*$")
+
+
+def signal_level(value: Any) -> int | None:
+    """Read a signal value such as "Stærk, 7", "God, 5", or "9" as a number."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    match = _SIGNAL_NUMBER.search(str(value).strip())
+    return int(match.group(1)) if match else None
 
 
 # --- deviceListGet / sensorListGet -------------------------------------------

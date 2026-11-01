@@ -10,6 +10,18 @@ The project is based on the Egardia integration and adapted for Trueguard varian
   - `battery_ok`
   - `tamper_ok`
   - `rssi`
+- Per-zone **battery** and **tamper** diagnostic sensors (on = problem), and a
+  per-zone **signal** sensor (disabled by default; enable it per zone).
+- Panel status sensors when the panel reports them: **Panel battery**,
+  **Panel tamper**, **Radio interference**, **230 V power**, **GSM problem**,
+  and **GSM signal**.
+- Optional push receiver: the panel reports alarms, arming, and faults to Home
+  Assistant as they happen (SIA DC-09 / Contact ID). The alarm shows
+  **triggered** with the cause, zone, and time, and every report fires a
+  `trueguard_report` event.
+- Discovery of Climax-based panels on the network (DHCP), and following the
+  panel when its IP address changes.
+- Diagnostics download with credentials, MAC, and account redacted.
 - State-aware icons for alarm and sensor entities.
 - Device registry linking so entities appear under the integration device overview.
 - Config Flow support (UI setup in Home Assistant).
@@ -39,6 +51,55 @@ The project is based on the Egardia integration and adapted for Trueguard varian
   the same, so automations and dashboards keep working.
 - If the panel rejects the saved password, Home Assistant asks you to sign in
   again.
+
+### Push reports from the panel
+Without push reports, Home Assistant only learns what the panel is doing by
+polling. The panel's own alarm reporting (the feature it uses for TrueConnect
+or a monitoring centre) can also send every alarm, arm/disarm, and fault
+report straight to Home Assistant.
+
+1. In Home Assistant: **Configure**, turn on **Receive reports from the
+   panel**, keep port `52010` (or pick another free port), and optionally enter
+   an account number.
+2. On the panel, under **Rapport indst.**, pick a **free** row and set it to
+
+   ```
+   ip://1234@HOME-ASSISTANT-IP:52010/CID_SIA
+   ```
+
+   where `1234` is the account number. Save, then press **Test**.
+
+Never change a row that is already in use (for example the TrueConnect row or
+a monitoring centre): that would stop their alarms. `/SIA` and `/CID` also
+work; encrypted reporting (`/SES`) is not supported. Only connections from
+the panel's own IP address are accepted, and the traffic is not encrypted, so
+keep the panel and Home Assistant on a trusted network. In Docker, publish the
+port or use host networking.
+
+How reports affect the alarm entity:
+- **Burglary** alarms show **triggered** until the panel is armed or disarmed
+  again.
+- **Fire, water, panic, and other 24-hour alarms** show **triggered** until the
+  zone restores.
+- A reported alarm clears after one hour at the latest.
+- **Duress** and **silent panic** only fire the event, never show triggered.
+- **Arm/disarm reports** update the alarm at once.
+- Every report also makes the integration read the panel straight away.
+
+Every report fires a `trueguard_report` event with `format`, `account`,
+`cid`, `qualifier`, `code`, `description`, `sia_code`, `group`, `zone`, and
+`zone_name`, for example:
+
+```yaml
+trigger:
+  - trigger: event
+    event_type: trueguard_report
+    event_data:
+      cid: "1111"   # smoke alarm
+```
+
+The old Egardia `[ACCOUNT STATUS]` format still works with the YAML
+`report_server_codes` mapping.
 
 ### Legacy YAML setup (still supported)
 ```yaml
@@ -117,3 +178,11 @@ Entities set up from YAML are not grouped under a device (Home Assistant 2026.9+
 - Tests: `python -m pytest tests` runs the parser tests, including real (anonymised) SMARTHOME answers.
 - Report server on/off and port can be changed under **Configure** (the integration restarts once).
 - New **Reconfigure** option to change host/IP, port, panel version, and login without removing the integration. The device and entity IDs stay the same.
+
+## Release 2.5.0 highlights
+- Panel status sensors from the panel's own status answer: battery, tamper, radio interference, 230 V power, GSM problem, and GSM signal.
+- Per-zone battery and tamper diagnostic sensors, and per-zone signal sensors (disabled by default). The attributes on the main sensors are unchanged.
+- New push receiver for SIA DC-09 and Contact ID reports, adapted from MRDonnii/trueguard-mz-home-assistant (MIT). The alarm can now show **triggered**, with cause, zone, and time attributes, and every report fires a `trueguard_report` event. Replaces the threaded `depend/egardiaserver.py`; the old Egardia frame format is still understood.
+- Optional account number for the receiver under **Configure**.
+- DHCP discovery of Climax panels (MAC prefix `00:1D:94`). A panel set up with an IP address is followed when its address changes; device and entity IDs stay the same.
+- Diagnostics download with credentials, MAC, and account redacted.

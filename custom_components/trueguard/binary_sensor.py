@@ -6,6 +6,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -13,6 +14,8 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import DOMAIN, EGARDIA_SENSOR_COORDINATOR
+from .entity import TrueguardEntity
+from .parser import flag_ok
 
 EGARDIA_TYPE_TO_DEVICE_CLASS = {
     "PIR kamera": BinarySensorDeviceClass.MOTION,
@@ -119,7 +122,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up Trueguard binary sensors from config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id][EGARDIA_SENSOR_COORDINATOR]
-    async_add_entities(_build_entities(coordinator), False)
+    async_add_entities(
+        _build_entities(coordinator)
+        + _build_panel_entities(coordinator)
+        + _build_zone_problem_entities(coordinator),
+        False,
+    )
 
 
 def _build_entities(coordinator):
@@ -247,3 +255,103 @@ class EgardiaBinarySensor(CoordinatorEntity, BinarySensorEntity):
             return
         self._last_written = snapshot
         self.async_write_ha_state()
+
+# --- Panel status (panelCondGet "updates") ------------------------------------
+
+# key in the panel's status, name, device class, text key, on when the flag is OK
+PANEL_FLAGS = (
+    ("battery_ok", "Panel battery", BinarySensorDeviceClass.BATTERY, "battery", False),
+    ("tamper_ok", "Panel tamper", BinarySensorDeviceClass.TAMPER, "tamper", False),
+    (
+        "interference_ok",
+        "Radio interference",
+        BinarySensorDeviceClass.PROBLEM,
+        "interference",
+        False,
+    ),
+    ("ac_activation_ok", "230 V power", BinarySensorDeviceClass.POWER, "ac_activation", True),
+    ("sig_gsm_ok", "GSM problem", BinarySensorDeviceClass.PROBLEM, "sig_gsm", False),
+)
+
+
+def _build_panel_entities(coordinator):
+    """Create panel status sensors for the flags this panel reports."""
+    panel = (coordinator.data or {}).get("panel", {})
+    return [
+        TrueguardPanelFlag(coordinator, *flag)
+        for flag in PANEL_FLAGS
+        if flag[0] in panel
+    ]
+
+
+class TrueguardPanelFlag(TrueguardEntity, BinarySensorEntity):
+    """A panel-level status flag such as battery, tamper, or 230 V power."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, key, name, device_class, text_key, on_when_ok):
+        self._key = key
+        self._text_key = text_key
+        self._on_when_ok = on_when_ok
+        self._attr_name = f"Trueguard {name}"
+        self._attr_device_class = device_class
+        super().__init__(coordinator)
+        self._attr_unique_id = f"trueguard_{self._client.device_key}_panel_{key}"
+
+    def _refresh(self) -> None:
+        panel = self._data.get("panel", {})
+        ok = flag_ok(panel.get(self._key))
+        self._attr_is_on = None if ok is None else (ok if self._on_when_ok else not ok)
+        self._attr_extra_state_attributes = {
+            "panel_status": panel.get(self._text_key),
+            "raw_value": panel.get(self._key),
+        }
+
+    def _value(self):
+        return (self._attr_is_on, tuple(self._attr_extra_state_attributes.items()))
+
+
+# --- Per-zone battery and tamper ------------------------------------------------
+
+ZONE_FLAGS = (
+    ("battery_ok", "battery", BinarySensorDeviceClass.BATTERY, "battery"),
+    ("tamper_ok", "tamper", BinarySensorDeviceClass.TAMPER, "tamper"),
+)
+
+
+def _build_zone_problem_entities(coordinator):
+    """Create a battery and a tamper sensor for each zone that reports them."""
+    sensors = (coordinator.data or {}).get("sensors", {})
+    return [
+        TrueguardZoneFlag(coordinator, sensor_id, sensor.get("name") or str(sensor_id), *flag)
+        for sensor_id, sensor in sensors.items()
+        for flag in ZONE_FLAGS
+        if flag[0] in sensor
+    ]
+
+
+class TrueguardZoneFlag(TrueguardEntity, BinarySensorEntity):
+    """Low battery or tamper for one zone. On means there is a problem."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, sensor_id, zone_name, key, suffix, device_class, text_key):
+        self._sensor_id = sensor_id
+        self._key = key
+        self._text_key = text_key
+        self._attr_name = f"{zone_name} {suffix}"
+        self._attr_device_class = device_class
+        super().__init__(coordinator)
+        self._attr_unique_id = f"trueguard_{sensor_id}_{suffix}"
+
+    def _refresh(self) -> None:
+        sensor = self._data.get("sensors", {}).get(self._sensor_id) or {}
+        ok = flag_ok(sensor.get(self._key))
+        self._attr_is_on = None if ok is None else not ok
+        self._attr_extra_state_attributes = {
+            "zone": sensor.get("zone"),
+            "panel_status": sensor.get(self._text_key) or None,
+        }
+
+    def _value(self):
+        return (self._attr_is_on, tuple(self._attr_extra_state_attributes.items()))

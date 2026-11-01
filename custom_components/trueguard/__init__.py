@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+import socket
 
 import voluptuous as vol
 
 from .api import TrueguardClient, VersionError
 from .coordinator import TrueguardSensorCoordinator
-from .depend import egardiaserver
+from .receiver import ReportReceiver
 
 from homeassistant.const import (
     CONF_HOST,
@@ -34,12 +35,20 @@ ATTR_DISCOVER_DEVICES = "egardia_sensor"
 CONF_REPORT_SERVER_CODES = "report_server_codes"
 CONF_REPORT_SERVER_ENABLED = "report_server_enabled"
 CONF_REPORT_SERVER_PORT = "report_server_port"
+# Optional account number the panel reports with; blank accepts any.
+CONF_REPORT_ACCOUNT = "report_server_account"
 CONF_VERSION = "version"
 # Stable identity of the panel's device and alarm entity. Set when the
 # address is changed with Reconfigure, so entity and device IDs stay the same.
 CONF_DEVICE_KEY = "device_key"
+# Panel MAC address, learned from DHCP discovery; used to follow IP changes.
+CONF_MAC = "mac"
 # Options that need the integration to restart when they change.
-RELOAD_OPTIONS = (CONF_REPORT_SERVER_ENABLED, CONF_REPORT_SERVER_PORT)
+RELOAD_OPTIONS = (
+    CONF_REPORT_SERVER_ENABLED,
+    CONF_REPORT_SERVER_PORT,
+    CONF_REPORT_ACCOUNT,
+)
 
 DEFAULT_NAME = "Trueguard"
 DEFAULT_PORT = 80
@@ -51,7 +60,7 @@ DEFAULT_SCAN_INTERVAL = 5
 MIN_SCAN_INTERVAL = 1
 MAX_SCAN_INTERVAL = 3600
 DOMAIN = "trueguard"
-PLATFORMS = [Platform.ALARM_CONTROL_PANEL, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.ALARM_CONTROL_PANEL, Platform.BINARY_SENSOR, Platform.SENSOR]
 
 EGARDIA_DEVICE = "trueguarddevice"
 EGARDIA_NAME = "egardianame"
@@ -135,6 +144,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     conf[CONF_REPORT_SERVER_PORT] = entry_setting(
         entry, CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT
     )
+    conf[CONF_REPORT_ACCOUNT] = entry_setting(entry, CONF_REPORT_ACCOUNT, "")
     conf.setdefault(CONF_NAME, DEFAULT_NAME)
     conf.setdefault(CONF_REPORT_SERVER_CODES, {})
     try:
@@ -154,7 +164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     try:
-        server = await _async_start_report_server(hass, conf)
+        server = await _async_start_report_server(hass, conf, coordinator)
     except OSError as err:
         raise ConfigEntryNotReady(
             f"Unable to start report server on port "
@@ -248,7 +258,7 @@ async def _async_setup_from_conf(
         return False
 
     try:
-        server = await _async_start_report_server(hass, conf)
+        server = await _async_start_report_server(hass, conf, coordinator)
     except OSError:
         _LOGGER.error("Binding error occurred while starting EgardiaServer")
         return False
@@ -295,25 +305,36 @@ def _create_client(hass: HomeAssistant, conf: dict) -> TrueguardClient:
     return client
 
 
-async def _async_start_report_server(hass: HomeAssistant, conf: dict):
-    """Start the report server if enabled. Raises OSError if it cannot bind."""
+async def _async_start_report_server(hass: HomeAssistant, conf: dict, coordinator):
+    """Start the push report receiver if enabled. Raises OSError if it cannot bind.
+
+    Only connections from the panel's own address are accepted.
+    """
     if not conf.get(CONF_REPORT_SERVER_ENABLED, DEFAULT_REPORT_SERVER_ENABLED):
         return None
 
-    _LOGGER.debug("Setting up EgardiaServer")
-    server = egardiaserver.EgardiaServer(
-        "", conf.get(CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT)
+    host = conf.get(CONF_HOST)
+    allowed: set[str] = set()
+    try:
+        infos = await hass.loop.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+        allowed = {info[4][0] for info in infos}
+    except OSError as err:
+        _LOGGER.warning(
+            "Could not resolve %s (%s); accepting reports from any address", host, err
+        )
+    # IPv4 peers can show up as IPv4-mapped IPv6 addresses.
+    allowed |= {f"::ffff:{ip}" for ip in list(allowed) if ":" not in ip}
+
+    receiver = ReportReceiver(
+        conf.get(CONF_REPORT_SERVER_PORT, DEFAULT_REPORT_SERVER_PORT),
+        allowed,
+        str(conf.get(CONF_REPORT_ACCOUNT) or ""),
+        coordinator.async_handle_report,
     )
-    if not await hass.async_add_executor_job(server.bind):
-        raise OSError("Binding error occurred while starting EgardiaServer")
-    server.start()
-    return server
+    await receiver.async_start()
+    return receiver
 
 
 async def _async_stop_server(hass: HomeAssistant, server) -> None:
-    """Stop the report server and release its port.
-
-    shutdown() blocks until the serve loop exits, so it runs in the executor.
-    """
-    await hass.async_add_executor_job(server.stop)
-
+    """Stop the report receiver and release its port."""
+    await server.async_stop()
