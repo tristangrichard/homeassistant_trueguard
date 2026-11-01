@@ -34,6 +34,8 @@ _LOGGER = logging.getLogger(__name__)
 # arm, or disarm.
 TRIGGERED_MAX = timedelta(hours=1)
 
+ISSUE_TRACKER = "https://github.com/tristangrichard/homeassistant_trueguard/issues"
+
 # Panel modes (see parser.parse_panel_state) to alarm states.
 STATES = {
     "ARM": AlarmControlPanelState.ARMED_AWAY,
@@ -99,6 +101,7 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
         self._triggered: dict | None = None
         self._last_alarm: dict | None = None
         self._cancel_expiry = None
+        self._warned_modes: set[str] = set()
         super().__init__(coordinator)
 
     @property
@@ -125,15 +128,34 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
 
     @property
     def extra_state_attributes(self):
-        """The newest alarm reported by the panel's push reports."""
-        return dict(self._last_alarm) if self._last_alarm else None
+        """The panel's own mode text, and the newest reported alarm."""
+        attributes = {"panel_mode": self._panel_mode()}
+        if self._last_alarm:
+            attributes.update(self._last_alarm)
+        return attributes
+
+    def _panel_mode(self) -> str | None:
+        """The panel's mode text as it shows it, e.g. "Deltilkobling 2"."""
+        panel = self._data.get("panel", {})
+        return panel.get("mode_a1", panel.get("mode_st"))
 
     # --- Polled state ----------------------------------------------------------------
 
     def _refresh(self) -> None:
         """Apply the alarm mode read from the panel."""
-        polled = STATES.get(str(self._data.get("state") or "").upper())
+        mode = str(self._data.get("state") or "").upper()
+        polled = STATES.get(mode)
         if polled is None:
+            raw = self._panel_mode()
+            if mode and raw not in self._warned_modes:
+                self._warned_modes.add(raw)
+                _LOGGER.warning(
+                    "Trueguard panel reports a mode that is not recognised: %r. "
+                    "The alarm keeps its last known state. Please report this "
+                    "mode text at %s",
+                    raw,
+                    ISSUE_TRACKER,
+                )
             return
         if self._triggered is not None and polled != self._triggered["mode"]:
             # Armed or disarmed since the alarm: the alarm is over.
@@ -142,7 +164,11 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
         self._update_state()
 
     def _value(self):
-        return (self._attr_alarm_state, tuple((self._last_alarm or {}).items()))
+        return (
+            self._attr_alarm_state,
+            self._panel_mode(),
+            tuple((self._last_alarm or {}).items()),
+        )
 
     def _update_state(self) -> None:
         """Show triggered while a reported alarm is active, else the panel mode."""

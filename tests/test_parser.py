@@ -223,3 +223,19 @@ def test_flag_ok(value, expected):
 )
 def test_signal_level(value, expected):
     assert P.signal_level(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("version", "raw", "expected"),
+    [
+        ("SMARTHOME", "Deltilkobling 2", "HOME"),
+        ("SMARTHOME", "Deltilkobling 3", "HOME"),
+        ("SMARTHOME", "Deltilkoblet 1", "HOME"),
+        ("SMARTHOME", "Fuldtilkoblet", "ARM"),
+        ("SMARTHOME", "Frakoblet", "DISARM"),
+        ("SMARTHOME", "Noget nyt", "UNKNOWN"),
+        ("GATE-03", "Home Arm 4", "HOME"),
+    ],
+)
+def test_mode_variants(version, raw, expected):
+    assert P.parse_panel_state(MODERN_STATE % raw, version) == expected

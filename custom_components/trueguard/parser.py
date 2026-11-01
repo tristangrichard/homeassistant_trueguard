@@ -40,8 +40,31 @@ GATE03_STATES_MAPPING = {
 SMARTHOME_STATES_MAPPING = {
     "FRAKOBLET": "DISARM",
     "DELTILKOBLING 1": "HOME",
+    "DELTILKOBLING 2": "HOME",
+    "DELTILKOBLING 3": "HOME",
     "FULDSIKRING": "ARM",
 }
+# Fallbacks by prefix for mode texts that vary between firmware versions,
+# for example "Deltilkoblet 2" or "Fuldtilkoblet".
+MODE_PREFIXES = (
+    ("FRAKOBL", "DISARM"),
+    ("DISARM", "DISARM"),
+    ("DELTILKOBL", "HOME"),
+    ("HOME ARM", "HOME"),
+    ("FULDSIKR", "ARM"),
+    ("FULDTILKOBL", "ARM"),
+    ("FULL ARM", "ARM"),
+)
+
+
+def map_mode(mapping: dict[str, str], status: str) -> str:
+    """Map a panel mode text to ARM, HOME, or DISARM; UNKNOWN if not recognised."""
+    if status in mapping:
+        return mapping[status]
+    for prefix, mode in MODE_PREFIXES:
+        if status.startswith(prefix):
+            return mode
+    return "UNKNOWN"
 
 # panelCondPost "mode" values per command and version.
 ARM_AWAY_MODE = {"WV-1716": 0, "GATE-01": 0, "GATE-02": 0, "GATE-03": 1, DEVICE_SMART_HOME: 1}
@@ -244,9 +267,9 @@ def parse_panel_status(text: str, version: str) -> tuple[str, dict[str, Any]]:
 
     status = str(raw).strip().upper()
     if version == "GATE-03":
-        status = GATE03_STATES_MAPPING.get(status, "UNKNOWN")
+        status = map_mode(GATE03_STATES_MAPPING, status)
     elif version == DEVICE_SMART_HOME:
-        status = SMARTHOME_STATES_MAPPING.get(status, "UNKNOWN")
+        status = map_mode(SMARTHOME_STATES_MAPPING, status)
     return status, panel
 
 

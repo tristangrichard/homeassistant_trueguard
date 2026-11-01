@@ -186,3 +186,9 @@ the panel's SIA / Contact ID reports by itself.
 - The YAML-only `report_server_codes` mapping and the old Egardia `[ACCOUNT STATUS]` report format are gone; use the SIA / Contact ID push receiver.
 - All remaining Egardia code names removed (`TrueguardAlarm`, `TrueguardZoneSensor`, `TrueguardCoordinator`). Entity and device IDs are unchanged.
 - `manifest.json` now lists this repository as the documentation and issue tracker, with @tristangrichard as code owner. Removed the outdated `requirements.txt`.
+
+## Release 2.7.0 highlights
+- Partial arm 2 and 3 (`Deltilkobling 2` / `3`, and firmware variants such as `Deltilkoblet` or `Fuldtilkoblet`) now show as armed home instead of an unknown state. The alarm entity has a `panel_mode` attribute with the panel's own mode text.
+- A mode the integration does not recognise keeps the last known state and logs one warning with the mode text, so it can be added.
+- Zones added, removed, or renamed on the panel reload the integration automatically (after the change is seen on two polls in a row).
+- `hacs.json` declares Home Assistant 2024.12.0 as the minimum version.
