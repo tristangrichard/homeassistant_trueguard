@@ -12,11 +12,14 @@ from .parser import (
     ARM_HOME_MODE,
     DISARM_MODE,
     SUPPORTED_VERSIONS,
+    CommandRejectedError,
     PanelParseError,
     TrueguardError,
     UnauthorizedError,
     VersionError,
+    command_rejected,
     is_unauthorized,
+    parse_command_message,
     parse_command_result,
     parse_panel_status,
     parse_sensor_list,
@@ -30,6 +33,7 @@ REQUEST_TIMEOUT = 10
 RETRY_DELAY = 0.5
 
 __all__ = [
+    "CommandRejectedError",
     "PanelParseError",
     "TrueguardClient",
     "TrueguardConnectionError",
@@ -192,7 +196,12 @@ class TrueguardClient:
         text = await self._request(
             "POST", "panelCondPost", {"area": "1", "mode": str(mode)}
         )
-        _LOGGER.info("Trueguard %s, result: %s", label, parse_command_result(text))
+        result = parse_command_result(text)
+        _LOGGER.info("Trueguard %s, result: %s", label, result)
+        if command_rejected(result):
+            raise CommandRejectedError(
+                parse_command_message(text) or f"the panel answered with result {result}"
+            )
 
     async def async_arm_away(self) -> None:
         """Arm the panel fully."""

@@ -8,11 +8,12 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DATA_COORDINATOR, DOMAIN
+from . import DATA_COORDINATOR, DOMAIN, zone_unique_id
 from .entity import TrueguardEntity
-from .parser import flag_ok
+from .parser import flag_ok, has_open_state
 
 TYPE_TEXT_TO_DEVICE_CLASS = {
     "PIR kamera": BinarySensorDeviceClass.MOTION,
@@ -83,10 +84,6 @@ def _resolve_icon(sensor_data, is_on, device_class, entity_name: str | None = No
     sensor_type_code = _sensor_type_code(sensor)
     lookup_text = f"{sensor_type_name} {sensor_name} {display_name}"
 
-    if sensor_type_code == 37 or "keypad" in lookup_text or "tastatur" in lookup_text:
-        return "mdi:dialpad"
-    if sensor_type_code == 2 or "remote" in lookup_text or "fjernbetjening" in lookup_text:
-        return "mdi:remote"
     if sensor_type_code in (45, 46) or "sirene" in lookup_text or "siren" in lookup_text:
         return "mdi:bullhorn" if is_on else "mdi:bullhorn-outline"
     return (
@@ -103,6 +100,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Trueguard binary sensors from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id][DATA_COORDINATOR]
+    _remove_old_zone_entities(hass, coordinator)
     async_add_entities(
         _build_zone_entities(coordinator)
         + _build_panel_entities(coordinator)
@@ -113,12 +111,25 @@ async def async_setup_entry(
 # --- Zones (door, motion, smoke, ...) --------------------------------------------
 
 def _build_zone_entities(coordinator):
-    """One sensor per zone in the panel's device list."""
+    """One sensor per zone in the panel's device list that can open or trigger."""
     sensors = (coordinator.data or {}).get("sensors", {})
     return [
         TrueguardZoneSensor(coordinator, sensor_id, sensor)
         for sensor_id, sensor in sensors.items()
+        if has_open_state(sensor)
     ]
+
+
+def _remove_old_zone_entities(hass, coordinator) -> None:
+    """Remove the always-off sensors of remotes and keypads from older versions."""
+    registry = er.async_get(hass)
+    for sensor_id, sensor in (coordinator.data or {}).get("sensors", {}).items():
+        if has_open_state(sensor):
+            continue
+        unique_id = zone_unique_id(coordinator.client.device_key, sensor_id)
+        entity_id = registry.async_get_entity_id("binary_sensor", DOMAIN, unique_id)
+        if entity_id is not None:
+            registry.async_remove(entity_id)
 
 
 class TrueguardZoneSensor(TrueguardEntity, BinarySensorEntity):
@@ -128,13 +139,14 @@ class TrueguardZoneSensor(TrueguardEntity, BinarySensorEntity):
         self._id = sensor_id
         self._sensor_data = sensor_data
         self._attr_name = sensor_data.get("name")
-        self._attr_unique_id = f"trueguard_{sensor_id}"
         self._attr_device_class = _resolve_device_class(sensor_data)
         super().__init__(coordinator)
+        self._attr_unique_id = zone_unique_id(self._client.device_key, sensor_id)
 
     def _refresh(self) -> None:
         latest = self._data.get("sensors", {}).get(self._id, self._sensor_data)
         self._sensor_data = latest
+        self._set_name(latest.get("name"))
         is_on = self._client.sensor_is_on(latest)
         self._attr_is_on = bool(is_on) if is_on is not None else None
         self._attr_icon = _resolve_icon(
@@ -248,13 +260,18 @@ class TrueguardZoneFlag(TrueguardEntity, BinarySensorEntity):
         self._sensor_id = sensor_id
         self._key = key
         self._text_key = text_key
+        self._suffix = suffix
         self._attr_name = f"{zone_name} {suffix}"
         self._attr_device_class = device_class
         super().__init__(coordinator)
-        self._attr_unique_id = f"trueguard_{sensor_id}_{suffix}"
+        self._attr_unique_id = zone_unique_id(
+            self._client.device_key, sensor_id, f"_{suffix}"
+        )
 
     def _refresh(self) -> None:
         sensor = self._data.get("sensors", {}).get(self._sensor_id) or {}
+        if name := sensor.get("name"):
+            self._set_name(f"{name} {self._suffix}")
         ok = flag_ok(sensor.get(self._key))
         self._attr_is_on = None if ok is None else not ok
         self._attr_extra_state_attributes = {

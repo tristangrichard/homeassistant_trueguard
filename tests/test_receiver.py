@@ -98,6 +98,24 @@ def test_receiver_accepts_panel_and_acks():
     assert [r.cid for r in got] == ["1130"]
 
 
+def test_receiver_without_allowed_hosts_accepts_nothing():
+    async def run():
+        got = []
+        receiver = R.ReportReceiver(0, set(), "", got.append)
+        await receiver.async_start()
+        try:
+            _, writer = await asyncio.open_connection("127.0.0.1", receiver.bound_port)
+            writer.write(b"[1234 18 1130 01 015 C]")
+            await writer.drain()
+            await asyncio.sleep(0.1)
+            writer.close()
+        finally:
+            await receiver.async_stop()
+        return got
+
+    assert asyncio.run(run()) == []
+
+
 def test_receiver_ignores_other_hosts_and_accounts():
     async def run():
         got = []
@@ -111,7 +129,7 @@ def test_receiver_ignores_other_hosts_and_accounts():
             writer.close()
         finally:
             await receiver.async_stop()
-        receiver = R.ReportReceiver(0, set(), "9999", got.append)
+        receiver = R.ReportReceiver(0, {"127.0.0.1", "::1"}, "9999", got.append)
         await receiver.async_start()
         try:
             _, writer = await asyncio.open_connection("127.0.0.1", receiver.bound_port)

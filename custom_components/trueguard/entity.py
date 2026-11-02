@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.const import CONF_NAME
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import DOMAIN
+from . import DEFAULT_NAME, DOMAIN
 
 
 class TrueguardEntity(CoordinatorEntity):
@@ -36,7 +38,17 @@ class TrueguardEntity(CoordinatorEntity):
         return None
 
     def _snapshot(self) -> Any:
-        return (self.available, self._value())
+        return (self.available, getattr(self, "_attr_name", None), self._value())
+
+    def _set_name(self, name: str | None) -> None:
+        """Follow a zone renamed on the panel, keeping the entity ID."""
+        if not name or name == getattr(self, "_attr_name", None):
+            return
+        self._attr_name = name
+        if self.registry_entry is not None:
+            er.async_get(self.hass).async_update_entity(
+                self.entity_id, original_name=name
+            )
 
     async def async_added_to_hass(self) -> None:
         """Remember the state Home Assistant writes when the entity is added."""
@@ -52,13 +64,11 @@ class TrueguardEntity(CoordinatorEntity):
         self.async_write_ha_state()
 
     @property
-    def device_info(self) -> DeviceInfo | None:
-        """Attach to the panel device (config-entry setups only, HA 2026.9+)."""
-        if self.platform is None or self.platform.config_entry is None:
-            return None
+    def device_info(self) -> DeviceInfo:
+        """Attach to the panel device, named after the integration entry."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._client.device_key)},
-            name="Trueguard",
+            name=self.coordinator.config_entry.data.get(CONF_NAME, DEFAULT_NAME),
             manufacturer="Trueguard",
             model=self._client.version,
         )

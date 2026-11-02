@@ -57,6 +57,11 @@ class TrueguardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Trueguard."""
 
     VERSION = 1
+    MINOR_VERSION = 2
+
+    # Reconfigure and reauth update and reload the entry themselves: Home
+    # Assistant reports async_update_reload_and_abort on an entry with an update
+    # listener as an error that breaks in 2026.12.
 
     @staticmethod
     @callback
@@ -241,9 +246,11 @@ class TrueguardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_DEVICE_KEY: device_key(entry.data),
             }
             if (error := await self._async_validate(data)) is None:
-                return self.async_update_reload_and_abort(
+                self.hass.config_entries.async_update_entry(
                     entry, unique_id=new_unique_id, data=data
                 )
+                self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_abort(reason="reconfigure_successful")
             errors["base"] = error
 
         current = {**entry.data, **(user_input or {})}
@@ -303,7 +310,9 @@ class TrueguardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             data = {**entry.data, **user_input}
             if (error := await self._async_validate(data)) is None:
-                return self.async_update_reload_and_abort(entry, data=data)
+                self.hass.config_entries.async_update_entry(entry, data=data)
+                self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
             errors["base"] = error
 
         schema = vol.Schema(

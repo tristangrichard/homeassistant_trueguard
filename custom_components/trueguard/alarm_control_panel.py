@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from . import (
@@ -45,7 +46,17 @@ STATES = {
     "HOME": AlarmControlPanelState.ARMED_HOME,
     "NIGHT HOME": AlarmControlPanelState.ARMED_NIGHT,
     "TRIGGERED": AlarmControlPanelState.TRIGGERED,
+    "ARMING": AlarmControlPanelState.ARMING,
+    "PENDING": AlarmControlPanelState.PENDING,
 }
+
+# Passing states: shown while the panel reports them, but what counts as the
+# panel's armed or disarmed mode is the last other state.
+PASSING_STATES = (
+    AlarmControlPanelState.TRIGGERED,
+    AlarmControlPanelState.ARMING,
+    AlarmControlPanelState.PENDING,
+)
 
 # Arm/disarm reports (see reports.action_for) to alarm states.
 REPORT_STATES = {
@@ -83,8 +94,11 @@ async def async_setup_entry(
     )
 
 
-class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
-    """The panel's alarm: polled mode, plus pushed alarm reports."""
+class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
+    """The panel's alarm: polled mode, plus pushed alarm reports.
+
+    A reported alarm is only known here, so it is restored after a restart.
+    """
 
     _attr_code_arm_required = False
     _attr_supported_features = (
@@ -98,28 +112,50 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
         self._reports_enabled = reports_enabled
         self._attr_alarm_state: AlarmControlPanelState | None = None
         self._polled_state: AlarmControlPanelState | None = None
+        self._passing_state: AlarmControlPanelState | None = None
         self._triggered: dict | None = None
         self._last_alarm: dict | None = None
         self._cancel_expiry = None
         self._warned_modes: set[str] = set()
         super().__init__(coordinator)
 
-    @property
-    def device_info(self):
-        """The panel device, named after the integration entry."""
-        info = super().device_info
-        if info is not None:
-            info["name"] = self._attr_name
-        return info
-
     async def async_added_to_hass(self) -> None:
-        """Listen for reports pushed by the panel."""
+        """Restore a reported alarm and listen for reports pushed by the panel."""
+        await self._async_restore()
         await super().async_added_to_hass()
         if self._reports_enabled:
             self.async_on_remove(
                 self.coordinator.async_add_report_listener(self._async_handle_report)
             )
         self.async_on_remove(self._cancel_expiry_timer)
+
+    async def _async_restore(self) -> None:
+        """Bring back a reported alarm that is still active."""
+        if (stored := await self.async_get_last_extra_data()) is None:
+            return
+        stored = stored.as_dict()
+        self._last_alarm = stored.get("last_alarm")
+        triggered = stored.get("triggered")
+        if not triggered:
+            return
+        until = dt_util.parse_datetime(triggered.get("until") or "")
+        if until is None or dt_util.utcnow() >= until:
+            return
+        if self._polled_state not in (None, triggered.get("mode")):
+            # Armed or disarmed since the alarm: the alarm is over.
+            return
+        self._triggered = {**triggered, "until": until}
+        self._start_expiry_timer()
+        self._update_state()
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        """What is stored across restarts."""
+        triggered = self._triggered and {
+            **self._triggered,
+            "until": self._triggered["until"].isoformat(),
+        }
+        return RestoredExtraData({"triggered": triggered, "last_alarm": self._last_alarm})
 
     @property
     def icon(self) -> str:
@@ -157,10 +193,14 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
                     ISSUE_TRACKER,
                 )
             return
-        if self._triggered is not None and polled != self._triggered["mode"]:
-            # Armed or disarmed since the alarm: the alarm is over.
-            self._clear_triggered()
-        self._polled_state = polled
+        if polled in PASSING_STATES:
+            self._passing_state = polled
+        else:
+            self._passing_state = None
+            if self._triggered is not None and polled != self._triggered["mode"]:
+                # Armed or disarmed since the alarm: the alarm is over.
+                self._clear_triggered()
+            self._polled_state = polled
         self._update_state()
 
     def _value(self):
@@ -171,13 +211,13 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
         )
 
     def _update_state(self) -> None:
-        """Show triggered while a reported alarm is active, else the panel mode."""
+        """Show triggered while a reported alarm is active, else the panel's state."""
         if self._triggered is not None and dt_util.utcnow() >= self._triggered["until"]:
             self._clear_triggered()
         if self._triggered is not None:
             self._attr_alarm_state = AlarmControlPanelState.TRIGGERED
         else:
-            self._attr_alarm_state = self._polled_state
+            self._attr_alarm_state = self._passing_state or self._polled_state
 
     def _write_if_changed(self) -> None:
         snapshot = self._snapshot()
@@ -218,6 +258,7 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
                 self._clear_triggered()
         elif action.kind in REPORT_STATES:
             self._clear_triggered()
+            self._passing_state = None
             self._polled_state = REPORT_STATES[action.kind]
         else:
             return
@@ -243,8 +284,9 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity):
             self._update_state()
             self._write_if_changed()
 
+        remaining = self._triggered["until"] - dt_util.utcnow()
         self._cancel_expiry = async_call_later(
-            self.hass, TRIGGERED_MAX.total_seconds() + 1, _expire
+            self.hass, remaining.total_seconds() + 1, _expire
         )
 
     # --- Commands ----------------------------------------------------------------------

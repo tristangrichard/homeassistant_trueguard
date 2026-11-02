@@ -82,7 +82,8 @@ How reports affect the alarm entity:
   again.
 - **Fire, water, panic, and other 24-hour alarms** show **triggered** until the
   zone restores.
-- A reported alarm clears after one hour at the latest.
+- A reported alarm clears after one hour at the latest. It survives a restart
+  of Home Assistant, unless the panel was armed or disarmed in the meantime.
 - **Duress** and **silent panic** only fire the event, never show triggered.
 - **Arm/disarm reports** update the alarm at once.
 - Every report also makes the integration read the panel straight away.
@@ -192,3 +193,15 @@ the panel's SIA / Contact ID reports by itself.
 - A mode the integration does not recognise keeps the last known state and logs one warning with the mode text, so it can be added.
 - Zones added, removed, or renamed on the panel reload the integration automatically (after the change is seen on two polls in a row).
 - `hacs.json` declares Home Assistant 2024.12.0 as the minimum version.
+
+## Release 2.7.1 highlights
+- Reauthentication and Reconfigure no longer use a Home Assistant call that logs an error on this integration and is marked as breaking in 2026.12.
+- The alarm shows **triggered**, **arming**, or **pending** from polling alone when the panel's mode text says so (for example `Alarm`, `Udløst`, `Tilkobler`, `Udgang`, `Indgang`). Before, these texts kept the last state.
+- A command the panel refuses now shows an error in Home Assistant with the panel's own reason, for example arming with an open door names the zone.
+- A reported alarm and its cause survive a restart or reload.
+- A zone renamed on the panel updates its entities without reloading the integration. Added or removed zones still reload.
+- The report receiver no longer accepts reports from any address when the panel's hostname cannot be resolved.
+- Keypads and remotes no longer get an always-off sensor; their battery, tamper, and signal sensors stay. Existing always-off sensors are removed, so update any automation or dashboard that uses them.
+- Zone entities' internal unique IDs now include the panel, so two panels cannot collide. Existing entries are migrated and entity IDs stay the same. Going back to an older version would create duplicate zone entities.
+- The device keeps the name given to the integration instead of being overwritten with "Trueguard".
+- Tests against a real Home Assistant in `tests_ha` (`python -m pytest tests_ha`, needs `pytest-homeassistant-custom-component`).

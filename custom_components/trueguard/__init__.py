@@ -18,10 +18,10 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
@@ -150,6 +150,35 @@ def device_key(conf: dict) -> str:
     return conf.get(CONF_DEVICE_KEY) or f"{conf.get(CONF_HOST)}_{conf.get(CONF_PORT, DEFAULT_PORT)}"
 
 
+def zone_unique_id(key: str, sensor_id, suffix: str = "") -> str:
+    """Return the unique ID of a zone's entity on the panel with this device key."""
+    return f"trueguard_{key}_zone_{sensor_id}{suffix}"
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate an older config entry."""
+    if entry.version > 1:
+        return False
+    if entry.minor_version < 2:
+        # Zone entities were trueguard_<zone>[_suffix], which two panels could
+        # share. Entity IDs stay the same.
+        key = device_key(entry.data)
+
+        @callback
+        def _migrate(entity: er.RegistryEntry) -> dict[str, str] | None:
+            if entity.domain not in (Platform.BINARY_SENSOR, Platform.SENSOR):
+                return None
+            unique_id = entity.unique_id
+            if unique_id.startswith(f"trueguard_{key}"):
+                return None  # a panel-level entity
+            zone = unique_id.removeprefix("trueguard_")
+            return {"new_unique_id": zone_unique_id(key, zone)}
+
+        await er.async_migrate_entries(hass, entry.entry_id, _migrate)
+        hass.config_entries.async_update_entry(entry, minor_version=2)
+    return True
+
+
 def entry_setting(entry: ConfigEntry, key: str, default):
     """Return a setting from the entry's options, falling back to its data."""
     return entry.options.get(key, entry.data.get(key, default))
@@ -275,13 +304,16 @@ async def _async_start_report_server(hass: HomeAssistant, conf: dict, coordinato
         return None
 
     host = conf.get(CONF_HOST)
-    allowed: set[str] = set()
+    allowed: set[str] = {host}
     try:
         infos = await hass.loop.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-        allowed = {info[4][0] for info in infos}
+        allowed |= {info[4][0] for info in infos}
     except OSError as err:
         _LOGGER.warning(
-            "Could not resolve %s (%s); accepting reports from any address", host, err
+            "Could not resolve %s (%s); reports are ignored until it resolves "
+            "and the integration is reloaded",
+            host,
+            err,
         )
     # IPv4 peers can show up as IPv4-mapped IPv6 addresses.
     allowed |= {f"::ffff:{ip}" for ip in list(allowed) if ":" not in ip}
