@@ -55,12 +55,27 @@ MODE_PREFIXES = (
     ("FULDTILKOBL", "ARM"),
     ("FULL ARM", "ARM"),
 )
+# Words in a mode text that mean the panel is in alarm or counting down.
+# They win over MODE_PREFIXES: "Deltilkobling alarm" is an alarm.
+MODE_WORDS = (
+    ("ALARM", "TRIGGERED"),
+    ("UDLØST", "TRIGGERED"),
+    ("TILKOBLER", "ARMING"),
+    ("UDGANG", "ARMING"),
+    ("INDGANG", "PENDING"),
+)
 
 
 def map_mode(mapping: dict[str, str], status: str) -> str:
-    """Map a panel mode text to ARM, HOME, or DISARM; UNKNOWN if not recognised."""
+    """Map a panel mode text to a mode in alarm_control_panel.STATES.
+
+    Returns UNKNOWN if the text is not recognised.
+    """
     if status in mapping:
         return mapping[status]
+    for word, mode in MODE_WORDS:
+        if word in status:
+            return mode
     for prefix, mode in MODE_PREFIXES:
         if status.startswith(prefix):
             return mode
@@ -114,6 +129,10 @@ class VersionError(TrueguardError):
 
 class PanelParseError(TrueguardError):
     """The panel answered with something that could not be understood."""
+
+
+class CommandRejectedError(TrueguardError):
+    """The panel answered an arm or disarm command with a failure result."""
 
 
 def is_unauthorized(text: str) -> bool:
@@ -301,7 +320,7 @@ def sensor_list_action(version: str) -> str:
 
 
 def parse_sensor_list(text: str, version: str) -> dict[Any, dict[str, Any]]:
-    """Return the panel's sensors keyed by id, without remotes and keypads."""
+    """Return the panel's sensors keyed by id, without SENSOR_TYPES_TO_IGNORE."""
     if is_unauthorized(text):
         raise UnauthorizedError("The panel rejected the login")
     if "is not defined" in text:
@@ -353,6 +372,11 @@ def sensor_type_code(sensor: dict[str, Any]) -> int | None:
             return code
     type_name = str(sensor.get("type_f", "")).strip().lower()
     return _TYPE_TEXT_TO_CODE.get(type_name) if type_name else None
+
+
+def has_open_state(sensor: dict[str, Any]) -> bool:
+    """Return False for remotes and keypads, which are never open or triggered."""
+    return sensor_type_code(sensor) not in (TYPE_REMOTE, TYPE_KEYPAD)
 
 
 def sensor_is_on(sensor: dict[str, Any] | None, version: str) -> bool | None:
@@ -411,3 +435,26 @@ def parse_command_result(text: str) -> str:
         match = re.search(r'"?result"?\s*:\s*"?([^,}"\s]*)', text)
         result = match.group(1) if match else ""
     return str(result)
+
+
+def parse_command_message(text: str) -> str:
+    """Return the panel's explanation from a panelCondPost answer, if any.
+
+    For example "Kunne ikke skifte tilstand : Område1Zone4(Stue) DC åbnet".
+    """
+    try:
+        message = find_key(loads_panel_json(text), "message")
+    except PanelParseError:
+        return ""
+    return str(message).strip() if message else ""
+
+
+def command_rejected(result: str) -> bool:
+    """Return True for a failure result: zero or negative.
+
+    A SMARTHOME panel answers 1 when it accepts a command and 0 when it refuses,
+    for example to arm with an open door. No result at all is not treated as a
+    failure, because not every firmware has been seen.
+    """
+    value = _as_int(result)
+    return value is not None and value <= 0

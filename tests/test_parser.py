@@ -239,3 +239,56 @@ def test_signal_level(value, expected):
 )
 def test_mode_variants(version, raw, expected):
     assert P.parse_panel_state(MODERN_STATE % raw, version) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("ALARM", "TRIGGERED"),
+        ("UDLØST", "TRIGGERED"),
+        ("DELTILKOBLING ALARM", "TRIGGERED"),
+        ("TILKOBLER", "ARMING"),
+        ("UDGANGSTID", "ARMING"),
+        ("INDGANGSTID", "PENDING"),
+        ("FULDTILKOBLET", "ARM"),
+        ("DELTILKOBLET 2", "HOME"),
+    ],
+)
+def test_map_mode_words(text, expected):
+    assert P.map_mode(P.SMARTHOME_STATES_MAPPING, text) == expected
+
+
+@pytest.mark.parametrize(
+    ("result", "rejected"),
+    [("1", False), ("0", True), ("-1", True), ("", False), ("ok", False)],
+)
+def test_command_rejected(result, rejected):
+    assert P.command_rejected(result) is rejected
+
+
+@pytest.mark.parametrize(
+    ("sensor", "expected"),
+    [
+        ({"type": 37}, False),
+        ({"type": 2}, False),
+        ({"type": "Tastatur"}, False),
+        ({"type": "Fjernbetjening"}, False),
+        ({"type": 4}, True),
+        ({"type": 45}, True),
+        ({"type": "Noget nyt"}, True),
+    ],
+)
+def test_has_open_state(sensor, expected):
+    assert P.has_open_state(sensor) is expected
+
+
+def test_command_answers_from_a_real_panel():
+    accepted = '{\n  "result" : 1,\n  "message" : "Opdateret."\n}\n'
+    refused = (
+        '{\n  "result" : 0,\n  "message" : "Kunne ikke skifte tilstand : '
+        'Område1Zone4(Stue  Door  1) DC åbnet"\n}\n'
+    )
+    assert not P.command_rejected(P.parse_command_result(accepted))
+    assert P.command_rejected(P.parse_command_result(refused))
+    assert "Zone4" in P.parse_command_message(refused)
+    assert P.parse_command_message('{"result" : 0}') == ""

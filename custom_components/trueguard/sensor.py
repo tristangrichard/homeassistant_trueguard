@@ -7,7 +7,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DATA_COORDINATOR, DOMAIN
+from . import DATA_COORDINATOR, DOMAIN, zone_unique_id
 from .entity import TrueguardEntity
 from .parser import signal_level
 
@@ -66,10 +66,12 @@ class TrueguardZoneSignal(TrueguardEntity, SensorEntity):
         self._sensor_id = sensor_id
         self._attr_name = f"{zone_name} signal"
         super().__init__(coordinator)
-        self._attr_unique_id = f"trueguard_{sensor_id}_signal"
+        self._attr_unique_id = zone_unique_id(self._client.device_key, sensor_id, "_signal")
 
     def _refresh(self) -> None:
         sensor = self._data.get("sensors", {}).get(self._sensor_id) or {}
+        if name := sensor.get("name"):
+            self._set_name(f"{name} signal")
         self._attr_native_value = signal_level(sensor.get("rssi"))
         self._attr_extra_state_attributes = {"signal_text": sensor.get("rssi")}
 

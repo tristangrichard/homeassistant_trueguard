@@ -251,7 +251,7 @@ class ReportReceiver:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         peer = (writer.get_extra_info("peername") or ("",))[0]
-        if self._allowed and peer not in self._allowed:
+        if peer not in self._allowed:
             _LOGGER.warning("Ignored a Trueguard report from unknown host %s", peer)
             writer.close()
             return
