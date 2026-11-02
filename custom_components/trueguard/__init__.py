@@ -32,6 +32,8 @@ from .receiver import ReportReceiver
 
 _LOGGER = logging.getLogger(__name__)
 
+# Some constants and CONFIG_SCHEMA are modified from Home Assistant's Egardia
+# integration (Apache-2.0), see THIRD_PARTY_NOTICES.
 CONF_REPORT_SERVER_ENABLED = "report_server_enabled"
 CONF_REPORT_SERVER_PORT = "report_server_port"
 # Optional account number the panel reports with; blank accepts any.

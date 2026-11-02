@@ -1,6 +1,9 @@
 {
   "domain": "trueguard",
   "name": "Trueguard",
+  "categories": [
+    "security_safety.alarm_systems"
+  ],
   "codeowners": [
     "@tristangrichard"
   ],

@@ -1,8 +1,9 @@
 # Trueguard Home Assistant Integration
 
 Custom integration for connecting Trueguard (Climax-based) alarm panels to Home Assistant.
-It started as a fork of Home Assistant's Egardia integration; since 2.6.0 none
-of that code remains.
+It started as a fork of Home Assistant's Egardia integration and has since been
+rewritten; the small parts that remain are listed in
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
 
 ## What's included
 - Alarm control panel entity (arm away, arm home, disarm).
@@ -27,6 +28,31 @@ of that code remains.
 - Device registry linking so entities appear under the integration device overview.
 - Config Flow support (UI setup in Home Assistant).
 - Local integration branding assets via `custom_components/trueguard/brand/`.
+
+## Installation
+[![Open your Home Assistant instance and open this repository.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tristangrichard&repository=homeassistant_trueguard&category=integration)
+
+Trueguard is not in the HACS / Marketplace catalog yet, so it is added as a
+custom repository. The button above opens it in HACS or the Marketplace.
+
+### Home Assistant 2026.11 or newer: Marketplace
+HACS is built into Home Assistant as **Settings -> Marketplace**.
+
+1. Use the button above. Adding a custom repository needs a GitHub connection.
+2. Download **Trueguard** and restart Home Assistant.
+
+If you already installed Trueguard with HACS, there is nothing to do: it moves
+to the Marketplace when you upgrade and keeps getting updates.
+
+### Home Assistant 2026.10 or older: HACS
+1. In HACS, open the menu and choose **Custom repositories**.
+2. Add `https://github.com/tristangrichard/homeassistant_trueguard` with the type
+   **Integration**.
+3. Download **Trueguard** and restart Home Assistant.
+
+### Manual
+Copy `custom_components/trueguard` to `/config/custom_components/` and restart
+Home Assistant.
 
 ## Setup
 ### Preferred: UI setup
@@ -111,8 +137,12 @@ the panel's SIA / Contact ID reports by itself.
 ## Supported panel versions
 `WV-1716`, `GATE-01`, `GATE-02`, `GATE-03`, `SMARTHOME`
 
+## License
+MIT, see [LICENSE](LICENSE). Parts from other projects are listed in
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
+
 ## HACS notes
-- Repository includes `hacs.json` and is compatible with custom repository installation in HACS.
+- Repository includes `hacs.json` and is compatible with custom repository installation in HACS and the Marketplace.
 - For release detection, keep `custom_components/trueguard/manifest.json` `version` aligned with git tags.
 
 ## Release 2.0.1 highlights

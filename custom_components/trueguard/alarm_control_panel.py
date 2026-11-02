@@ -37,7 +37,8 @@ TRIGGERED_MAX = timedelta(hours=1)
 
 ISSUE_TRACKER = "https://github.com/tristangrichard/homeassistant_trueguard/issues"
 
-# Panel modes (see parser.parse_panel_state) to alarm states.
+# Panel modes (see parser.parse_panel_state) to alarm states. Modified from Home
+# Assistant's Egardia integration (Apache-2.0), see THIRD_PARTY_NOTICES.
 STATES = {
     "ARM": AlarmControlPanelState.ARMED_AWAY,
     "DAY HOME": AlarmControlPanelState.ARMED_HOME,
