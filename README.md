@@ -235,3 +235,10 @@ MIT, see [LICENSE](LICENSE). Parts from other projects are listed in
 - Zone entities' internal unique IDs now include the panel, so two panels cannot collide. Existing entries are migrated and entity IDs stay the same. Going back to an older version would create duplicate zone entities.
 - The device keeps the name given to the integration instead of being overwritten with "Trueguard".
 - Tests against a real Home Assistant in `tests_ha` (`python -m pytest tests_ha`, needs `pytest-homeassistant-custom-component`).
+
+## Release 2.7.2 highlights
+- No change in how the integration behaves.
+- The project is now under the MIT License, with `THIRD_PARTY_NOTICES` listing the small parts that remain from other projects.
+- `manifest.json` declares the `security_safety.alarm_systems` category for the Marketplace.
+- Install steps for the Marketplace, HACS, and manual installation in the README.
+- CI runs HACS validation, hassfest, and the tests.
