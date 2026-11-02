@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import State
@@ -16,6 +17,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.trueguard import DATA_COORDINATOR, DOMAIN
+from custom_components.trueguard.receiver import PushReport
 
 FIXTURES = Path(__file__).parents[1] / "tests" / "fixtures"
 PANEL = (FIXTURES / "smarthome_panelcondget.txt").read_text(encoding="utf-8")
@@ -203,6 +205,25 @@ async def test_reported_alarm_survives_restart(hass, aioclient_mock):
     answer(aioclient_mock, "Frakoblet")
     await coordinator_of(hass, entry).async_refresh()
     assert hass.states.get(ALARM).state == "disarmed"
+
+
+async def test_reported_alarm_survives_reload(hass, aioclient_mock):
+    answer(aioclient_mock, "Fuldsikring")
+    with patch("custom_components.trueguard.ReportReceiver") as receiver:
+        receiver.return_value.async_start = AsyncMock()
+        receiver.return_value.async_stop = AsyncMock()
+        entry = await setup(hass, {**DATA, "report_server_enabled": True})
+        coordinator_of(hass, entry).async_handle_report(
+            PushReport(format="ADM-CID", qualifier="1", code="130", zone=4)
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get(ALARM).state == "triggered"
+
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    state = hass.states.get(ALARM)
+    assert state.state == "triggered"
+    assert state.attributes["alarm_zone"] == 4
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,8 @@ LEGACY_VERSIONS = ("WV-1716", "GATE-01", "GATE-02")
 # Versions that report sensor state through the numeric "st" field.
 MODERN_VERSIONS = ("GATE-03", DEVICE_SMART_HOME)
 
+# These lists, SUPPORTED_VERSIONS, and GATE03_STATES_MAPPING are modified from
+# pythonegardia (MIT), see THIRD_PARTY_NOTICES.
 SENSOR_TYPES_TO_IGNORE = ("Remote Controller", "Remote Keypad", "Keypad")
 UNAUTHORIZED_MESSAGES = ("Unauthorized", "Access Denied")
 
