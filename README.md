@@ -279,3 +279,11 @@ MIT, see [LICENSE](LICENSE). Parts from other projects are listed in
 - New **Reporting** sensor: on when the panel could not deliver its newest report to TrueConnect, a monitoring centre, or Home Assistant.
 - New **fault** sensor per zone, from the panel's zone condition ("Tilstand").
 - Report list reads are retried once after a network error, and diagnostics show the newest handled report.
+
+## Release 2.9.0 highlights
+- **Arm night** and **arm custom bypass** on SMARTHOME panels: partial arm 2 and 3 (`Deltilkobling 2` / `3`). They now show as **armed night** and **armed custom bypass** instead of armed home; update automations that check for `armed_home` in those modes.
+- **Bypass switch** per zone, like the panel's Bypass button. Disabled by default; enable it for the zones you want to bypass from Home Assistant.
+- **Faults** sensor with the panel's own list of active faults.
+- A reported alarm shows as triggered for the panel's siren time (the alarm's new `siren_time` attribute) instead of up to an hour.
+- Zone sensors no longer have an `rssi` attribute, and their raw panel values are not kept in the history. A changing signal wrote a new history row on almost every poll. Use the zone's signal sensor instead.
+- The panel's "session expired" answer is retried once instead of a command looking accepted, and its "wrong password" answer now asks you to sign in again.
