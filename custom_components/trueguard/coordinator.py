@@ -27,7 +27,8 @@ REPORT_LIST = "LIST"
 # means the oldest of them are missed.
 REPORT_ROWS = 20
 # Seconds between reads of the report list when nothing else changed. It is
-# also read at once whenever the alarm state or a zone changes.
+# also read at once whenever the alarm state, a zone, or a panel fault changes
+# (see _report_signature); signal strength and other readings do not count.
 REPORT_INTERVAL = 60
 # A pushed report shows up in the report list too; within this many seconds,
 # that row is not handled a second time.
@@ -65,6 +66,7 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_report_uid: int | None = None
         self._reports_read_at: float | None = None
         self._report_failures = 0
+        self._report_signature: tuple | None = None
         # (monotonic time, (qualifier, code, zone)) of recent pushed reports.
         self._recent_pushes: list[tuple[float, tuple]] = []
         super().__init__(
@@ -172,12 +174,17 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_check_report_list(self, data: dict[str, Any]) -> None:
         """Handle new rows in the panel's report list like pushed reports.
 
-        Read every REPORT_INTERVAL, and at once when the alarm state or a zone
-        changed, so an alarm shows up even without the push receiver. A panel
-        that cannot answer is only asked again every REPORT_INTERVAL.
+        Read every REPORT_INTERVAL, and at once when the alarm state, a zone,
+        or a panel fault changed, so an alarm shows up even without the push
+        receiver. A panel that cannot answer is only asked again every
+        REPORT_INTERVAL.
         """
         now = monotonic()
-        changed = self.data is not None and data != self.data
+        signature = _report_signature(data)
+        changed = (
+            self._report_signature is not None and signature != self._report_signature
+        )
+        self._report_signature = signature
         due = (
             self._reports_read_at is None
             or now - self._reports_read_at >= REPORT_INTERVAL
@@ -257,3 +264,44 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 def _report_key(report: PushReport) -> tuple:
     """What identifies the same report pushed and in the report list."""
     return (report.qualifier, report.code, report.zone)
+
+
+# Panel status flags whose change means the panel may have reported something.
+_PANEL_REPORT_KEYS = (
+    "mode_a1",
+    "mode_a2",
+    "mode_st",
+    "battery_ok",
+    "tamper_ok",
+    "interference_ok",
+    "ac_activation_ok",
+)
+# Zone fields whose change means the panel may have reported something.
+_ZONE_REPORT_KEYS = (
+    "st",
+    "status",
+    "cond",
+    "cond_ok",
+    "battery_ok",
+    "tamper_ok",
+    "bypass",
+    "temp_bypass",
+)
+
+
+def _report_signature(data: dict[str, Any]) -> tuple:
+    """The parts of the panel's answer that change when it reports something.
+
+    Signal strength and other readings change on their own, so they are left
+    out.
+    """
+    panel = data.get("panel", {})
+    sensors = data.get("sensors", {})
+    return (
+        data.get("state"),
+        tuple(panel.get(key) for key in _PANEL_REPORT_KEYS),
+        tuple(
+            (str(sensor_id), *(sensors[sensor_id].get(key) for key in _ZONE_REPORT_KEYS))
+            for sensor_id in sorted(sensors, key=str)
+        ),
+    )

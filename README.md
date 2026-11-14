@@ -82,8 +82,8 @@ Home Assistant.
 ### Alarms from the panel's report list
 The integration also reads the panel's report list (**Rapport hændelser**,
 the Contact ID events the panel reports), so alarms show up without push
-reports. It is read once a minute, and at once whenever the alarm mode or a
-zone changes. Each new row is handled like a pushed report (see below), except
+reports. It is read once a minute, and at once whenever the alarm mode, a
+zone, or a panel fault changes (not on signal strength changes). Each new row is handled like a pushed report (see below), except
 arm and disarm rows: the polled mode already shows those. Rows already in the
 list when Home Assistant starts are not handled, so an alarm that happened
 while Home Assistant was off does not show. A panel without a report list is

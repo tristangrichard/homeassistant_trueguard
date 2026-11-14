@@ -461,6 +461,18 @@ async def test_report_list_read_on_change_or_interval(hass, aioclient_mock):
         assert report_reads(aioclient_mock) == 1
 
 
+async def test_report_list_not_read_on_signal_changes(hass, aioclient_mock):
+    answer(aioclient_mock)
+    with patch("custom_components.trueguard.coordinator.monotonic", return_value=1000):
+        entry = await setup(hass)
+        assert report_reads(aioclient_mock) == 1
+        weaker = SENSORS.replace('"rssi": "Stærk, 7"', '"rssi": "Stærk, 3"', 1)
+        assert weaker != SENSORS
+        answer(aioclient_mock, sensors=weaker)
+        await coordinator_of(hass, entry).async_refresh()
+        assert report_reads(aioclient_mock) == 0
+
+
 async def test_report_list_skips_pushed_reports(hass, aioclient_mock):
     answer(aioclient_mock, "Fuldsikring")
     entry = await setup(hass)
