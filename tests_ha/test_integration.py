@@ -156,7 +156,7 @@ async def test_reconfigure_keeps_identity(hass, aioclient_mock, caplog):
         ("Fuldsikring", "armed_away"),
         ("Deltilkobling 1", "armed_home"),
         ("Deltilkobling 2", "armed_night"),
-        ("Deltilkobling 3", "armed_home"),
+        ("Deltilkobling 3", "armed_custom_bypass"),
         ("Alarm", "triggered"),
         ("Tilkobler", "arming"),
         ("Indgangstid", "pending"),
@@ -588,30 +588,44 @@ def posted_modes(aioclient_mock):
     ]
 
 
-async def test_arm_night(hass, aioclient_mock):
+ARM_NIGHT = 4  # AlarmControlPanelEntityFeature
+ARM_CUSTOM_BYPASS = 16
+
+
+@pytest.mark.parametrize(
+    ("service", "mode"),
+    [("alarm_arm_night", "3"), ("alarm_arm_custom_bypass", "4")],
+)
+async def test_partial_arm_2_and_3(hass, aioclient_mock, service, mode):
     answer(aioclient_mock)
     await setup(hass)
-    assert hass.states.get(ALARM).attributes["supported_features"] & 4  # ARM_NIGHT
+    features = hass.states.get(ALARM).attributes["supported_features"]
+    assert features & ARM_NIGHT and features & ARM_CUSTOM_BYPASS
     await hass.services.async_call(
-        "alarm_control_panel", "alarm_arm_night", {"entity_id": ALARM}, blocking=True
+        "alarm_control_panel", service, {"entity_id": ALARM}, blocking=True
     )
-    assert posted_modes(aioclient_mock) == ["3"]
+    assert posted_modes(aioclient_mock) == [mode]
 
 
-async def test_no_night_arming_on_other_versions(hass, aioclient_mock):
+async def test_no_partial_arm_2_and_3_on_other_versions(hass, aioclient_mock):
     answer(aioclient_mock)
     await setup(hass, {**DATA, "version": "GATE-03"})
-    assert not hass.states.get(ALARM).attributes["supported_features"] & 4
+    features = hass.states.get(ALARM).attributes["supported_features"]
+    assert not features & (ARM_NIGHT | ARM_CUSTOM_BYPASS)
 
 
-async def test_partial_arm_report_keeps_night(hass, aioclient_mock):
-    answer(aioclient_mock, "Deltilkobling 2")
+@pytest.mark.parametrize(
+    ("mode", "state"),
+    [("Deltilkobling 2", "armed_night"), ("Deltilkobling 3", "armed_custom_bypass")],
+)
+async def test_partial_arm_report_keeps_the_partial_mode(hass, aioclient_mock, mode, state):
+    answer(aioclient_mock, mode)
     entry = await setup(hass)
     coordinator_of(hass, entry).async_handle_report(
         PushReport(format="ADM-CID", qualifier="3", code="456", group=1, zone=1)
     )
     await hass.async_block_till_done()
-    assert hass.states.get(ALARM).state == "armed_night"
+    assert hass.states.get(ALARM).state == state
 
 
 def _session_then(answer_text):
@@ -669,3 +683,30 @@ async def test_session_error_while_polling_is_not_a_login_problem(hass, aioclien
     assert not coordinator.last_update_success
     assert not list(entry.async_get_active_flows(hass, {"reauth"}))
     assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_wrong_password_answer_starts_reauth(hass, aioclient_mock):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    aioclient_mock.clear_requests()
+    wrong = "Adgang nægtet: Forkert password!"
+    aioclient_mock.get(f"{BASE}panelCondGet", text=wrong)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=wrong)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=wrong)
+    await coordinator_of(hass, entry).async_refresh()
+    await hass.async_block_till_done()
+    assert list(entry.async_get_active_flows(hass, {"reauth"}))
+
+
+async def test_wrong_password_answer_fails_a_command(hass, aioclient_mock):
+    answer(aioclient_mock)
+    await setup(hass)
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(f"{BASE}panelCondPost", text="Adgang nægtet: Forkert password!")
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    with pytest.raises(HomeAssistantError, match="did not accept"):
+        await hass.services.async_call(
+            "alarm_control_panel", "alarm_arm_away", {"entity_id": ALARM}, blocking=True
+        )

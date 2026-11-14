@@ -9,6 +9,7 @@ import aiohttp
 
 from .parser import (
     ARM_AWAY_MODE,
+    ARM_CUSTOM_BYPASS_MODE,
     ARM_HOME_MODE,
     ARM_NIGHT_MODE,
     DISARM_MODE,
@@ -255,6 +256,17 @@ class TrueguardClient:
     async def async_arm_night(self) -> None:
         """Arm the panel in night mode (partial arm 2)."""
         await self._async_send_mode(ARM_NIGHT_MODE[self._version], "arming night")
+
+    @property
+    def supports_arm_custom_bypass(self) -> bool:
+        """Whether custom bypass arming (partial arm 3) is known for this version."""
+        return self._version in ARM_CUSTOM_BYPASS_MODE
+
+    async def async_arm_custom_bypass(self) -> None:
+        """Arm the panel in custom bypass mode (partial arm 3)."""
+        await self._async_send_mode(
+            ARM_CUSTOM_BYPASS_MODE[self._version], "arming custom bypass"
+        )
 
     async def async_disarm(self) -> None:
         """Disarm the panel."""
