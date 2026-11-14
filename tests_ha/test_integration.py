@@ -11,6 +11,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
 import pytest
+from pytest_homeassistant_custom_component.test_util.aiohttp import (
+    AiohttpClientMockResponse,
+)
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
@@ -151,6 +154,9 @@ async def test_reconfigure_keeps_identity(hass, aioclient_mock, caplog):
     [
         ("Frakoblet", "disarmed"),
         ("Fuldsikring", "armed_away"),
+        ("Deltilkobling 1", "armed_home"),
+        ("Deltilkobling 2", "armed_night"),
+        ("Deltilkobling 3", "armed_home"),
         ("Alarm", "triggered"),
         ("Tilkobler", "arming"),
         ("Indgangstid", "pending"),
@@ -567,3 +573,99 @@ async def test_zone_fault_sensor(hass, aioclient_mock):
     state = hass.states.get(fault)
     assert state.state == "on"
     assert state.attributes["panel_status"] == "Funktionsfejl"
+
+
+# --- Night arming and session errors ---------------------------------------------
+
+SESSION_EXPIRED = "Adgang nægtet: Sessionen er udløbet!"
+
+
+def posted_modes(aioclient_mock):
+    return [
+        call[2]["mode"]
+        for call in aioclient_mock.mock_calls
+        if "panelCondPost" in str(call[1])
+    ]
+
+
+async def test_arm_night(hass, aioclient_mock):
+    answer(aioclient_mock)
+    await setup(hass)
+    assert hass.states.get(ALARM).attributes["supported_features"] & 4  # ARM_NIGHT
+    await hass.services.async_call(
+        "alarm_control_panel", "alarm_arm_night", {"entity_id": ALARM}, blocking=True
+    )
+    assert posted_modes(aioclient_mock) == ["3"]
+
+
+async def test_no_night_arming_on_other_versions(hass, aioclient_mock):
+    answer(aioclient_mock)
+    await setup(hass, {**DATA, "version": "GATE-03"})
+    assert not hass.states.get(ALARM).attributes["supported_features"] & 4
+
+
+async def test_partial_arm_report_keeps_night(hass, aioclient_mock):
+    answer(aioclient_mock, "Deltilkobling 2")
+    entry = await setup(hass)
+    coordinator_of(hass, entry).async_handle_report(
+        PushReport(format="ADM-CID", qualifier="3", code="456", group=1, zone=1)
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(ALARM).state == "armed_night"
+
+
+def _session_then(answer_text):
+    """A panel that answers with a session error once, then answer_text."""
+    calls = []
+
+    async def respond(method, url, data):
+        calls.append(data)
+        text = SESSION_EXPIRED if len(calls) == 1 else answer_text
+        return AiohttpClientMockResponse(method, url, text=text)
+
+    return respond, calls
+
+
+async def test_session_error_is_retried(hass, aioclient_mock):
+    answer(aioclient_mock)
+    await setup(hass)
+    respond, calls = _session_then('{"result" : 1, "message" : "Opdateret."}')
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(f"{BASE}panelCondPost", side_effect=respond)
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    await hass.services.async_call(
+        "alarm_control_panel", "alarm_arm_away", {"entity_id": ALARM}, blocking=True
+    )
+    assert len(calls) == 2
+
+
+async def test_repeated_session_error_fails_the_command(hass, aioclient_mock):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(f"{BASE}panelCondPost", text=SESSION_EXPIRED)
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    with pytest.raises(HomeAssistantError, match="did not accept.*Sessionen er udløbet"):
+        await hass.services.async_call(
+            "alarm_control_panel", "alarm_arm_away", {"entity_id": ALARM}, blocking=True
+        )
+    # A session error is not a wrong password: no reauthentication.
+    assert not list(entry.async_get_active_flows(hass, {"reauth"}))
+
+
+async def test_session_error_while_polling_is_not_a_login_problem(hass, aioclient_mock):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{BASE}panelCondGet", text=SESSION_EXPIRED)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SESSION_EXPIRED)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    coordinator = coordinator_of(hass, entry)
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert not list(entry.async_get_active_flows(hass, {"reauth"}))
+    assert entry.state is ConfigEntryState.LOADED

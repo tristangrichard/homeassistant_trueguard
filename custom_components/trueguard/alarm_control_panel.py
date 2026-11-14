@@ -45,6 +45,7 @@ STATES = {
     "DISARM": AlarmControlPanelState.DISARMED,
     "ARMHOME": AlarmControlPanelState.ARMED_HOME,
     "HOME": AlarmControlPanelState.ARMED_HOME,
+    "NIGHT": AlarmControlPanelState.ARMED_NIGHT,
     "NIGHT HOME": AlarmControlPanelState.ARMED_NIGHT,
     "TRIGGERED": AlarmControlPanelState.TRIGGERED,
     "ARMING": AlarmControlPanelState.ARMING,
@@ -107,6 +108,10 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
     )
 
     def __init__(self, coordinator, name: str, unique_id: str):
+        if coordinator.client.supports_arm_night:
+            self._attr_supported_features = (
+                self._attr_supported_features | AlarmControlPanelEntityFeature.ARM_NIGHT
+            )
         self._attr_name = name
         self._attr_unique_id = unique_id
         self._attr_alarm_state: AlarmControlPanelState | None = None
@@ -261,7 +266,14 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
                 return
             self._clear_triggered()
             self._passing_state = None
-            self._polled_state = REPORT_STATES[action.kind]
+            reported = REPORT_STATES[action.kind]
+            if not (
+                reported == AlarmControlPanelState.ARMED_HOME
+                and self._polled_state == AlarmControlPanelState.ARMED_NIGHT
+            ):
+                # Partial-arm reports do not say which partial arm; keep the
+                # polled night mode.
+                self._polled_state = reported
         else:
             return
         self._update_state()
@@ -310,6 +322,10 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
     async def async_alarm_arm_home(self, code: str | None = None) -> None:
         """Send arm home command."""
         await self._async_send(self._client.async_arm_home, "arm home")
+
+    async def async_alarm_arm_night(self, code: str | None = None) -> None:
+        """Send arm night (partial arm 2) command."""
+        await self._async_send(self._client.async_arm_night, "arm night")
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Send arm away command."""

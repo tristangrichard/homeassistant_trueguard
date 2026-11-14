@@ -10,14 +10,17 @@ import aiohttp
 from .parser import (
     ARM_AWAY_MODE,
     ARM_HOME_MODE,
+    ARM_NIGHT_MODE,
     DISARM_MODE,
     SUPPORTED_VERSIONS,
     CommandRejectedError,
     PanelParseError,
+    SessionExpiredError,
     TrueguardError,
     UnauthorizedError,
     VersionError,
     command_rejected,
+    is_session_expired,
     is_unauthorized,
     parse_command_message,
     parse_command_result,
@@ -36,6 +39,7 @@ RETRY_DELAY = 0.5
 __all__ = [
     "CommandRejectedError",
     "PanelParseError",
+    "SessionExpiredError",
     "TrueguardClient",
     "TrueguardConnectionError",
     "TrueguardError",
@@ -66,8 +70,10 @@ class TrueguardClient:
 
     Reads are retried once on network errors. Commands (POST) are never
     retried on network errors, because the panel may already have acted on
-    them. Both are retried once if the panel answers "Unauthorized", which
-    some panels do now and then; a rejected request has no effect.
+    them. Both are retried once if the panel answers "Unauthorized" or with a
+    session error ("Adgang nægtet: Sessionen er udløbet!"), which panels do
+    now and then; a rejected request has no effect. A repeated session error
+    is a failed request, not a wrong password.
     """
 
     def __init__(
@@ -131,6 +137,8 @@ class TrueguardClient:
             raise TrueguardConnectionError(
                 f"Error talking to panel at {self._host}:{self._port}: {err!r}"
             ) from err
+        if is_session_expired(text):
+            raise SessionExpiredError(f"The panel answered: {text.strip()[:80]}")
         if is_unauthorized(text):
             raise UnauthorizedError("The panel rejected the login")
         return text
@@ -150,10 +158,16 @@ class TrueguardClient:
         if read is None:
             read = method == "GET"
         retried_auth = False
+        retried_session = False
         retried_network = False
         while True:
             try:
                 return await self._request_once(method, action, data)
+            except SessionExpiredError:
+                if retried_session:
+                    raise
+                retried_session = True
+                _LOGGER.debug("Retrying %s after a session error", action)
             except UnauthorizedError:
                 if retried_auth:
                     raise
@@ -232,6 +246,15 @@ class TrueguardClient:
     async def async_arm_home(self) -> None:
         """Arm the panel in home mode."""
         await self._async_send_mode(ARM_HOME_MODE[self._version], "arming home")
+
+    @property
+    def supports_arm_night(self) -> bool:
+        """Whether night arming (partial arm 2) is known for this version."""
+        return self._version in ARM_NIGHT_MODE
+
+    async def async_arm_night(self) -> None:
+        """Arm the panel in night mode (partial arm 2)."""
+        await self._async_send_mode(ARM_NIGHT_MODE[self._version], "arming night")
 
     async def async_disarm(self) -> None:
         """Disarm the panel."""

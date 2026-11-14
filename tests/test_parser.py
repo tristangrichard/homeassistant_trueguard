@@ -228,7 +228,8 @@ def test_signal_level(value, expected):
 @pytest.mark.parametrize(
     ("version", "raw", "expected"),
     [
-        ("SMARTHOME", "Deltilkobling 2", "HOME"),
+        ("SMARTHOME", "Deltilkobling 2", "NIGHT"),
+        ("SMARTHOME", "Deltilkoblet 2", "NIGHT"),
         ("SMARTHOME", "Deltilkobling 3", "HOME"),
         ("SMARTHOME", "Deltilkoblet 1", "HOME"),
         ("SMARTHOME", "Fuldtilkoblet", "ARM"),
@@ -251,7 +252,7 @@ def test_mode_variants(version, raw, expected):
         ("UDGANGSTID", "ARMING"),
         ("INDGANGSTID", "PENDING"),
         ("FULDTILKOBLET", "ARM"),
-        ("DELTILKOBLET 2", "HOME"),
+        ("DELTILKOBLET 2", "NIGHT"),
     ],
 )
 def test_map_mode_words(text, expected):
@@ -360,3 +361,9 @@ def test_report_delivery_unknown():
         "code": "131",
         "time": "2026-10-24 13:00:00",
     }
+
+
+def test_session_expired_answer():
+    assert P.is_session_expired("Adgang nægtet: Sessionen er udløbet!")
+    assert not P.is_unauthorized("Adgang nægtet: Sessionen er udløbet!")
+    assert not P.is_session_expired('{"result" : 1, "message" : "Opdateret."}')
