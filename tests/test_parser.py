@@ -373,3 +373,33 @@ def test_wrong_password_answer():
     # What a SMARTHOME panel answers, with HTTP 200, to a wrong password.
     assert P.is_unauthorized("Adgang nægtet: Forkert password!")
     assert not P.is_session_expired("Adgang nægtet: Forkert password!")
+
+
+def test_area_settings_and_siren_time():
+    area = P.parse_area_settings(
+        '{\n  "forms" : {\n    "areaform" : {\n      "exit_time_1": 30,\n'
+        '      "alarm_len": 180\n    }\n  }\n}'
+    )
+    assert area["exit_time_1"] == 30
+    assert P.siren_seconds(area) == 180
+    assert P.siren_seconds({"alarm_len": 0}) is None
+    assert P.siren_seconds({}) is None
+    with pytest.raises(P.PanelParseError):
+        P.parse_area_settings('{"result": 1}')
+
+
+def test_fault_list():
+    assert P.parse_fault_list('{\n  "faultrows": [\n]\n}') == []
+    faults = P.parse_fault_list(
+        '{"faultrows": [{"id": "3", "reason": " Lavt batteri i central ", "clear": 0}]}'
+    )
+    assert faults == [{"id": "3", "reason": "Lavt batteri i central", "clear": 0}]
+    with pytest.raises(P.PanelParseError):
+        P.parse_fault_list('{"result": 1}')
+
+
+@pytest.mark.parametrize(
+    ("temp_bypass", "bypassed"), [("0", False), ("1", True), ("", False), (None, False)]
+)
+def test_zone_bypassed(temp_bypass, bypassed):
+    assert P.zone_bypassed({"temp_bypass": temp_bypass}) is bypassed

@@ -25,6 +25,8 @@ from .parser import (
     is_unauthorized,
     parse_command_message,
     parse_command_result,
+    parse_area_settings,
+    parse_fault_list,
     parse_panel_status,
     parse_report_list,
     parse_sensor_list,
@@ -223,6 +225,14 @@ class TrueguardClient:
         )
         return parse_report_list(text)
 
+    async def async_get_area(self, area: int = 1) -> dict[str, Any]:
+        """Return an area's settings (entry/exit delays, siren time, ...)."""
+        return parse_area_settings(await self._request("GET", f"areaGet?area={area}"))
+
+    async def async_get_faults(self) -> list[dict[str, Any]]:
+        """Return the panel's active faults; empty when there are none."""
+        return parse_fault_list(await self._request("GET", "panelFaultGet"))
+
     def sensor_is_on(self, sensor: dict[str, Any] | None) -> bool | None:
         """Return whether a sensor is open/triggered for this panel version."""
         return sensor_is_on(sensor, self._version)
@@ -247,6 +257,17 @@ class TrueguardClient:
     async def async_arm_home(self) -> None:
         """Arm the panel in home mode."""
         await self._async_send_mode(ARM_HOME_MODE[self._version], "arming home")
+
+    async def async_set_bypass(self, sensor_id: str, bypass: bool) -> None:
+        """Bypass a zone, or end its bypass, like the panel's Bypass button."""
+        action = "deviceBypass" if bypass else "deviceUnbypass"
+        text = await self._request("POST", action, {"id": str(sensor_id)})
+        result = parse_command_result(text)
+        _LOGGER.info("Trueguard %s %s, result: %s", action, sensor_id, result)
+        if command_rejected(result):
+            raise CommandRejectedError(
+                parse_command_message(text) or f"the panel answered with result {result}"
+            )
 
     @property
     def supports_arm_night(self) -> bool:

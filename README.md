@@ -11,16 +11,22 @@ rewritten; the small parts that remain are listed in
   (`Deltilkobling 1` / `2` / `3`) show as **armed home**, **armed night**, and
   **armed custom bypass**.
 - Binary sensors for door, motion, smoke and related device types.
-- Per-sensor health/diagnostic values as attributes on the main sensor entity:
-  - `battery_ok`
-  - `tamper_ok`
-  - `rssi`
+- Per-sensor health/diagnostic values as attributes on the main sensor entity,
+  such as `battery_ok` and `tamper_ok`. They are not kept in Home Assistant's
+  history. Signal strength is not an attribute: it changed on almost every
+  poll, and each change wrote a new state to the history. Use the zone's
+  **signal** sensor instead.
 - Per-zone **battery**, **tamper**, and **fault** diagnostic sensors (on =
   problem; fault is the panel's "Tilstand" column), and a per-zone **signal**
   sensor (disabled by default; enable it per zone).
 - Panel status sensors when the panel reports them: **Panel battery**,
   **Panel tamper**, **Radio interference**, **230 V power**, **GSM problem**,
   and **GSM signal**.
+- **Faults** sensor (on = problem) with the panel's own list of active faults
+  in its `faults` attribute, read at the same times as the report list.
+- Per-zone **bypass** switch, like the panel's Bypass button: on leaves the
+  zone out when the panel is armed. Disabled by default; enable it for the
+  zones you want to bypass from Home Assistant.
 - **Reporting** sensor (on = problem) when the panel has a report list: on
   when the panel could not deliver its newest report to TrueConnect, a
   monitoring centre, or Home Assistant. The attributes show the report and the
@@ -127,7 +133,9 @@ How reports affect the alarm entity:
   again.
 - **Fire, water, panic, and other 24-hour alarms** show **triggered** until the
   zone restores.
-- A reported alarm clears after one hour at the latest. It survives a restart
+- A reported alarm clears after the panel's siren time at the latest (the
+  alarm's `siren_time` attribute, in seconds, read from the panel's area
+  settings once an hour), or after one hour if the panel does not tell. It survives a restart
   of Home Assistant, unless the panel was armed or disarmed in the meantime.
 - **Duress**, **silent panic**, and **panel tamper** only fire the event,
   never show triggered.

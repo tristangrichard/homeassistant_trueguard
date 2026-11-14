@@ -17,6 +17,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
+    async_fire_time_changed,
     mock_restore_cache_with_extra_data,
 )
 
@@ -49,6 +50,19 @@ def report_list(*rows):
     return '{\n  "rptrows": [\n' + ",\n".join(rows) + "]\n}"
 
 
+# Area 1's settings and the fault list, as a SMARTHOME panel answers them.
+AREA = """{
+  "forms" : {
+    "areaform" : {
+      "entry_time1_1": 30,
+      "exit_time_1": 30,
+      "alarm_len": 180,
+      "su_t": 0
+    }
+  }
+}"""
+FAULTS = '{\n  "faultrows": [\n]\n}'
+
 # The report list when the integration starts: rows already in it are not handled.
 REPORTS = report_list(report_row(10, "602", zone=0, message="Periodisk test"))
 
@@ -73,6 +87,8 @@ def answer(
     """Make the mocked panel answer with this state."""
     aioclient_mock.clear_requests()
     aioclient_mock.post(f"{BASE}reportEventListGet", text=reports)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     aioclient_mock.get(
         f"{BASE}panelCondGet",
         text=PANEL.replace('"mode_a1" : "Frakoblet"', f'"mode_a1" : "{mode}"'),
@@ -128,6 +144,8 @@ async def test_reconfigure_keeps_identity(hass, aioclient_mock, caplog):
     aioclient_mock.get("http://192.0.2.11:80/action/panelCondGet", text=PANEL)
     aioclient_mock.get("http://192.0.2.11:80/action/deviceListGet", text=SENSORS)
     aioclient_mock.post("http://192.0.2.11:80/action/reportEventListGet", text=REPORTS)
+    aioclient_mock.get("http://192.0.2.11:80/action/areaGet?area=1", text=AREA)
+    aioclient_mock.get("http://192.0.2.11:80/action/panelFaultGet", text=FAULTS)
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -185,6 +203,8 @@ async def test_rejected_command_shows_the_panels_reason(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
     aioclient_mock.post(f"{BASE}panelCondPost", text=REFUSED)
     aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     await setup(hass)
     with pytest.raises(HomeAssistantError, match="did not accept.*Zone4.*åbnet"):
         await hass.services.async_call(
@@ -506,6 +526,8 @@ async def test_report_list_unsupported(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
     aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
     aioclient_mock.post(f"{BASE}reportEventListGet", status=404)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     with patch("custom_components.trueguard.coordinator.monotonic", return_value=1000):
         entry = await setup(hass)
         assert entry.state is ConfigEntryState.LOADED
@@ -516,6 +538,8 @@ async def test_report_list_unsupported(hass, aioclient_mock):
         aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
         aioclient_mock.get(f"{BASE}deviceListGet", text=OPENED)
         aioclient_mock.post(f"{BASE}reportEventListGet", status=404)
+        aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+        aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
         await coordinator_of(hass, entry).async_refresh()
         assert report_reads(aioclient_mock) == 0
     assert reads == 2  # the first read, retried once
@@ -552,6 +576,8 @@ async def test_no_reporting_sensor_without_report_list(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
     aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
     aioclient_mock.post(f"{BASE}reportEventListGet", status=404)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     await setup(hass)
     assert entity_id_of(hass, "binary_sensor", REPORTING) is None
 
@@ -649,6 +675,8 @@ async def test_session_error_is_retried(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
     aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
     aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     await hass.services.async_call(
         "alarm_control_panel", "alarm_arm_away", {"entity_id": ALARM}, blocking=True
     )
@@ -663,6 +691,8 @@ async def test_repeated_session_error_fails_the_command(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
     aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
     aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     with pytest.raises(HomeAssistantError, match="did not accept.*Sessionen er udløbet"):
         await hass.services.async_call(
             "alarm_control_panel", "alarm_arm_away", {"entity_id": ALARM}, blocking=True
@@ -678,6 +708,8 @@ async def test_session_error_while_polling_is_not_a_login_problem(hass, aioclien
     aioclient_mock.get(f"{BASE}panelCondGet", text=SESSION_EXPIRED)
     aioclient_mock.get(f"{BASE}deviceListGet", text=SESSION_EXPIRED)
     aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     coordinator = coordinator_of(hass, entry)
     await coordinator.async_refresh()
     assert not coordinator.last_update_success
@@ -693,6 +725,8 @@ async def test_wrong_password_answer_starts_reauth(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}panelCondGet", text=wrong)
     aioclient_mock.get(f"{BASE}deviceListGet", text=wrong)
     aioclient_mock.post(f"{BASE}reportEventListGet", text=wrong)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     await coordinator_of(hass, entry).async_refresh()
     await hass.async_block_till_done()
     assert list(entry.async_get_active_flows(hass, {"reauth"}))
@@ -706,7 +740,147 @@ async def test_wrong_password_answer_fails_a_command(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
     aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
     aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
     with pytest.raises(HomeAssistantError, match="did not accept"):
         await hass.services.async_call(
             "alarm_control_panel", "alarm_arm_away", {"entity_id": ALARM}, blocking=True
+        )
+
+
+# --- History, siren time, faults, and bypass ---------------------------------------
+
+async def test_signal_changes_do_not_write_zone_state(hass, aioclient_mock):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    door = entity_id_of(hass, "binary_sensor", f"trueguard_{KEY}_zone_{DOOR}")
+    before = hass.states.get(door)
+    assert "rssi" not in before.attributes
+
+    weaker = SENSORS.replace('"rssi": "Stærk, 6"', '"rssi": "Stærk, 2"')
+    assert weaker != SENSORS
+    answer(aioclient_mock, sensors=weaker)
+    await coordinator_of(hass, entry).async_refresh()
+    assert hass.states.get(door).last_updated == before.last_updated
+
+
+async def test_siren_time_limits_a_reported_alarm(hass, aioclient_mock, freezer):
+    answer(aioclient_mock, "Fuldsikring")
+    entry = await setup(hass)
+    assert hass.states.get(ALARM).attributes["siren_time"] == 180
+    coordinator_of(hass, entry).async_handle_report(
+        PushReport(format="ADM-CID", qualifier="1", code="131", group=1, zone=4)
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(ALARM).state == "triggered"
+
+    freezer.tick(timedelta(seconds=182))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(ALARM).state == "armed_away"
+
+
+async def test_without_area_settings_an_alarm_lasts_an_hour(hass, aioclient_mock):
+    answer(aioclient_mock, "Fuldsikring")
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL.replace('"Frakoblet"', '"Fuldsikring"', 1))
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", status=404)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS)
+    entry = await setup(hass)
+    assert "siren_time" not in hass.states.get(ALARM).attributes
+    alarm = hass.data["entity_components"]["alarm_control_panel"].get_entity(ALARM)
+    assert alarm._triggered_max() == timedelta(hours=1)
+
+
+FAULTS_ACTIVE = (
+    '{"faultrows": [\n{"id": "1", "reason": "Lavt batteri i central", "clear": 0}]}'
+)
+
+
+async def test_faults_sensor(hass, aioclient_mock):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    faults = entity_id_of(hass, "binary_sensor", f"trueguard_{KEY}_panel_faults")
+    assert hass.states.get(faults).state == "off"
+
+    answer(aioclient_mock, sensors=OPENED)
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=OPENED)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", text=FAULTS_ACTIVE)
+    await coordinator_of(hass, entry).async_refresh()
+    state = hass.states.get(faults)
+    assert state.state == "on"
+    assert state.attributes["faults"] == ["Lavt batteri i central"]
+
+
+async def test_no_faults_sensor_without_fault_list(hass, aioclient_mock):
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
+    aioclient_mock.get(f"{BASE}areaGet?area=1", text=AREA)
+    aioclient_mock.get(f"{BASE}panelFaultGet", status=404)
+    await setup(hass)
+    assert entity_id_of(hass, "binary_sensor", f"trueguard_{KEY}_panel_faults") is None
+
+
+BYPASS = f"trueguard_{KEY}_zone_{DOOR}_bypass"
+
+
+async def test_bypass_switch_is_disabled_by_default(hass, aioclient_mock):
+    answer(aioclient_mock)
+    await setup(hass)
+    entity_id = entity_id_of(hass, "switch", BYPASS)
+    assert er.async_get(hass).async_get(entity_id).disabled_by is not None
+    assert entity_id_of(hass, "switch", f"trueguard_{KEY}_zone_{KEYPAD}_bypass") is None
+
+
+@pytest.fixture
+def bypass_enabled():
+    with patch(
+        "custom_components.trueguard.switch.TrueguardBypassSwitch."
+        "_attr_entity_registry_enabled_default",
+        True,
+    ):
+        yield
+
+
+async def test_bypass_switch(hass, aioclient_mock, bypass_enabled):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    switch = entity_id_of(hass, "switch", BYPASS)
+    assert hass.states.get(switch).state == "off"
+
+    aioclient_mock.post(f"{BASE}deviceBypass", text='{"result" : 1}')
+    aioclient_mock.post(f"{BASE}deviceUnbypass", text='{"result" : 1}')
+    await hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+    await hass.services.async_call("switch", "turn_off", {"entity_id": switch}, blocking=True)
+    sent = [
+        (str(call[1]).rsplit("/", 1)[-1], call[2])
+        for call in aioclient_mock.mock_calls
+        if "Bypass" in str(call[1]) or "bypass" in str(call[1])
+    ]
+    assert sent == [("deviceBypass", {"id": DOOR}), ("deviceUnbypass", {"id": DOOR})]
+
+    bypassed = SENSORS.replace(
+        '"bypass": "Nej", "temp_bypass": "0", "rssi": "Stærk, 6", \n"status": "Lås", "id": "RF:00e5ec10"',
+        '"bypass": "Nej", "temp_bypass": "1", "rssi": "Stærk, 6", \n"status": "Lås", "id": "RF:00e5ec10"',
+    )
+    assert bypassed != SENSORS
+    answer(aioclient_mock, sensors=bypassed)
+    await coordinator_of(hass, entry).async_refresh()
+    assert hass.states.get(switch).state == "on"
+
+
+async def test_rejected_bypass_raises(hass, aioclient_mock, bypass_enabled):
+    answer(aioclient_mock)
+    await setup(hass)
+    aioclient_mock.post(f"{BASE}deviceBypass", text='{"result" : 0, "message" : "Fejl"}')
+    with pytest.raises(HomeAssistantError, match="did not accept the bypass.*Fejl"):
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": entity_id_of(hass, "switch", BYPASS)}, blocking=True
         )
