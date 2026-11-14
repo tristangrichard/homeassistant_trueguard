@@ -12,11 +12,18 @@ rewritten; the small parts that remain are listed in
   - `battery_ok`
   - `tamper_ok`
   - `rssi`
-- Per-zone **battery** and **tamper** diagnostic sensors (on = problem), and a
-  per-zone **signal** sensor (disabled by default; enable it per zone).
+- Per-zone **battery**, **tamper**, and **fault** diagnostic sensors (on =
+  problem; fault is the panel's "Tilstand" column), and a per-zone **signal**
+  sensor (disabled by default; enable it per zone).
 - Panel status sensors when the panel reports them: **Panel battery**,
   **Panel tamper**, **Radio interference**, **230 V power**, **GSM problem**,
   and **GSM signal**.
+- **Reporting** sensor (on = problem) when the panel has a report list: on
+  when the panel could not deliver its newest report to TrueConnect, a
+  monitoring centre, or Home Assistant. The attributes show the report and the
+  panel's delivery status.
+- Alarms from the panel's report list, also without the push receiver (see
+  below).
 - Optional push receiver: the panel reports alarms, arming, and faults to Home
   Assistant as they happen (SIA DC-09 / Contact ID). The alarm shows
   **triggered** with the cause, zone, and time, and every report fires a

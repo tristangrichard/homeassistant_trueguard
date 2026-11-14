@@ -325,3 +325,38 @@ def test_report_list_empty_and_broken():
     assert P.parse_report_list('{"rptrows": [\n]}') == []
     with pytest.raises(P.PanelParseError):
         P.parse_report_list('{"result": 1}')
+
+
+def _rows(*statuses):
+    return [
+        {"uid": 10 - i, "status": status, "message": f"row {i}", "code": "602", "time": ""}
+        for i, status in enumerate(statuses)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("statuses", "failed"),
+    [
+        (("Færdig", "Fejlede"), False),
+        (("Fejlede", "Færdig"), True),
+        (("Venter", "Fejlede"), True),  # a report still being sent is skipped
+        (("Ingen forbindelse",), True),
+        (("Done",), False),
+        (("Failed",), True),
+    ],
+)
+def test_report_delivery(statuses, failed):
+    assert P.report_delivery(_rows(*statuses))["failed"] is failed
+
+
+def test_report_delivery_unknown():
+    assert P.report_delivery([]) is None
+    assert P.report_delivery(_rows("", "Venter")) is None
+    delivery = P.report_delivery(P.parse_report_list(REPORT_LIST))
+    assert delivery == {
+        "failed": True,
+        "status": "Fejlede",
+        "message": "Indbrud (Perimeter)",
+        "code": "131",
+        "time": "2026-10-24 13:00:00",
+    }

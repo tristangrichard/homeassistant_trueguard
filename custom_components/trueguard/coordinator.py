@@ -13,6 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import TrueguardClient, TrueguardError, UnauthorizedError, VersionError
+from .parser import report_delivery
 from .receiver import PushReport
 from .reports import code_text
 
@@ -67,6 +68,8 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._reports_read_at: float | None = None
         self._report_failures = 0
         self._report_signature: tuple | None = None
+        # Delivery of the newest finished report (parser.report_delivery).
+        self._report_delivery: dict[str, Any] | None = None
         # (monotonic time, (qualifier, code, zone)) of recent pushed reports.
         self._recent_pushes: list[tuple[float, tuple]] = []
         super().__init__(
@@ -169,6 +172,8 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Failed to refresh Trueguard panel data: {err}") from err
         self._check_zones(data)
         await self._async_check_report_list(data)
+        if self._report_delivery is not None:
+            data["report_delivery"] = self._report_delivery
         return data
 
     async def _async_check_report_list(self, data: dict[str, Any]) -> None:
@@ -199,6 +204,7 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Could not read the Trueguard report list: %s", err)
             return
         self._report_failures = 0
+        self._report_delivery = report_delivery(reports)
         newest = reports[0]["uid"] if reports else 0
         if self._last_report_uid is None or newest < self._last_report_uid:
             # First read, or the panel's list was cleared.
