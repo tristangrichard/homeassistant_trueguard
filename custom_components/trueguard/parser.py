@@ -513,6 +513,55 @@ def report_delivery(reports: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+# --- areaGet and panelFaultGet ---------------------------------------------------
+
+def parse_area_settings(text: str) -> dict[str, Any]:
+    """Return an area's settings from areaGet, for example
+    {"entry_time1_1": 30, "exit_time_1": 30, "alarm_len": 180, ...}.
+    """
+    if is_unauthorized(text):
+        raise UnauthorizedError("The panel rejected the login")
+    form = find_key(loads_panel_json(text), "areaform")
+    if not isinstance(form, dict):
+        raise PanelParseError("No areaform in panel area answer")
+    return form
+
+
+def siren_seconds(area: dict[str, Any]) -> int | None:
+    """The siren time from an area's settings, in seconds; None if not set.
+
+    "alarm_len" is assumed to be seconds: a SMARTHOME panel answers 180.
+    """
+    value = _as_int(area.get("alarm_len"))
+    return value if value and value > 0 else None
+
+
+def parse_fault_list(text: str) -> list[dict[str, Any]]:
+    """Return the panel's active faults from panelFaultGet.
+
+    Each row is {"id", "reason", "clear"}; an empty list means no faults.
+    """
+    if is_unauthorized(text):
+        raise UnauthorizedError("The panel rejected the login")
+    rows = find_key(loads_panel_json(text), "faultrows")
+    if not isinstance(rows, list):
+        raise PanelParseError("No faultrows in panel fault answer")
+    return [
+        {
+            "id": row.get("id"),
+            "reason": str(row.get("reason") or "").strip(),
+            "clear": row.get("clear"),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def zone_bypassed(sensor: dict[str, Any]) -> bool:
+    """Whether a zone is bypassed with the panel's Bypass button (temp_bypass)."""
+    return str(sensor.get("temp_bypass") or "0").strip() not in ("", "0")
+
+
 # --- panelCondPost --------------------------------------------------------------
 
 def parse_command_result(text: str) -> str:

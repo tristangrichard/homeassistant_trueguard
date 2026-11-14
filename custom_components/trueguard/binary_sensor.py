@@ -106,6 +106,7 @@ async def async_setup_entry(
         + _build_panel_entities(coordinator)
         + _build_zone_problem_entities(coordinator)
         + _build_reporting_entities(coordinator)
+        + _build_fault_entities(coordinator)
     )
 
 
@@ -134,7 +135,30 @@ def _remove_old_zone_entities(hass, coordinator) -> None:
 
 
 class TrueguardZoneSensor(TrueguardEntity, BinarySensorEntity):
-    """A zone such as a door contact, motion detector, or smoke alarm."""
+    """A zone such as a door contact, motion detector, or smoke alarm.
+
+    Signal strength is left out of the attributes (see the zone's signal
+    sensor): it changes from poll to poll and would write a new state, and a
+    new row in Home Assistant's history, every time. The raw panel values are
+    not kept in the history either.
+    """
+
+    _unrecorded_attributes = frozenset(
+        {
+            "panel_sensor_id",
+            "panel_sensor_type",
+            "panel_sensor_type_name",
+            "zone",
+            "area",
+            "status_text",
+            "raw_state_code",
+            "battery_ok",
+            "tamper_ok",
+            "bypass",
+            "temp_bypass",
+            "firmware_version",
+        }
+    )
 
     def __init__(self, coordinator, sensor_id, sensor_data) -> None:
         self._id = sensor_id
@@ -155,11 +179,11 @@ class TrueguardZoneSensor(TrueguardEntity, BinarySensorEntity):
         )
 
     def _value(self):
-        return (self._attr_is_on, dict(self._sensor_data or {}))
+        return (self._attr_is_on, self._attr_icon, tuple(self.extra_state_attributes.items()))
 
     @property
     def extra_state_attributes(self):
-        """Raw panel values for this zone."""
+        """Raw panel values for this zone, except signal strength."""
         sensor = self._sensor_data or {}
         return {
             "panel_sensor_id": sensor.get("id"),
@@ -173,7 +197,6 @@ class TrueguardZoneSensor(TrueguardEntity, BinarySensorEntity):
             "tamper_ok": sensor.get("tamper_ok"),
             "bypass": sensor.get("bypass"),
             "temp_bypass": sensor.get("temp_bypass"),
-            "rssi": sensor.get("rssi"),
             "firmware_version": sensor.get("ver"),
         }
 
@@ -270,6 +293,37 @@ class TrueguardReportingFailed(TrueguardEntity, BinarySensorEntity):
 
     def _value(self):
         return (self._attr_is_on, tuple(self._attr_extra_state_attributes.items()))
+
+
+# --- Active faults ------------------------------------------------------------------
+
+def _build_fault_entities(coordinator):
+    """A faults sensor, when the panel answers its fault list."""
+    if "faults" not in (coordinator.data or {}):
+        return []
+    return [TrueguardPanelFaults(coordinator)]
+
+
+class TrueguardPanelFaults(TrueguardEntity, BinarySensorEntity):
+    """On while the panel lists active faults (its own "Fejl" list)."""
+
+    _attr_name = "Trueguard Faults"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"trueguard_{self._client.device_key}_panel_faults"
+
+    def _refresh(self) -> None:
+        faults = self._data.get("faults")
+        self._attr_is_on = None if faults is None else bool(faults)
+        self._attr_extra_state_attributes = {
+            "faults": [fault["reason"] for fault in faults or []],
+        }
+
+    def _value(self):
+        return (self._attr_is_on, tuple(self._attr_extra_state_attributes["faults"]))
 
 
 # --- Per-zone battery, tamper, and fault ------------------------------------------

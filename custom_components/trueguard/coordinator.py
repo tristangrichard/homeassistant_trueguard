@@ -13,7 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import TrueguardClient, TrueguardError, UnauthorizedError, VersionError
-from .parser import report_delivery
+from .parser import report_delivery, siren_seconds
 from .receiver import PushReport
 from .reports import code_text
 
@@ -31,6 +31,8 @@ REPORT_ROWS = 20
 # also read at once whenever the alarm state, a zone, or a panel fault changes
 # (see _report_signature); signal strength and other readings do not count.
 REPORT_INTERVAL = 60
+# Seconds between reads of the area settings (siren time), which rarely change.
+AREA_INTERVAL = 3600
 # A pushed report shows up in the report list too; within this many seconds,
 # that row is not handled a second time.
 PUSH_MATCH = 600
@@ -70,6 +72,12 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._report_signature: tuple | None = None
         # Delivery of the newest finished report (parser.report_delivery).
         self._report_delivery: dict[str, Any] | None = None
+        # Active faults (panelFaultGet), read with the report list; None until
+        # the panel has answered.
+        self._faults: list[dict[str, Any]] | None = None
+        # Siren time in seconds from area 1's settings, read every AREA_INTERVAL.
+        self._siren_seconds: int | None = None
+        self._area_read_at: float | None = None
         # (monotonic time, (qualifier, code, zone)) of recent pushed reports.
         self._recent_pushes: list[tuple[float, tuple]] = []
         super().__init__(
@@ -172,9 +180,34 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Failed to refresh Trueguard panel data: {err}") from err
         self._check_zones(data)
         await self._async_check_report_list(data)
+        await self._async_check_area()
         if self._report_delivery is not None:
             data["report_delivery"] = self._report_delivery
+        if self._faults is not None:
+            data["faults"] = self._faults
+        if self._siren_seconds is not None:
+            data["siren_seconds"] = self._siren_seconds
         return data
+
+    async def _async_check_area(self) -> None:
+        """Read the siren time from area 1's settings every AREA_INTERVAL."""
+        now = monotonic()
+        if self._area_read_at is not None and now - self._area_read_at < AREA_INTERVAL:
+            return
+        self._area_read_at = now
+        try:
+            area = await self._client.async_get_area(1)
+        except TrueguardError as err:
+            _LOGGER.debug("Could not read the Trueguard area settings: %s", err)
+            return
+        self._siren_seconds = siren_seconds(area)
+
+    async def _async_read_faults(self) -> None:
+        """Read the panel's active faults; kept as they were if that fails."""
+        try:
+            self._faults = await self._client.async_get_faults()
+        except TrueguardError as err:
+            _LOGGER.debug("Could not read the Trueguard fault list: %s", err)
 
     async def _async_check_report_list(self, data: dict[str, Any]) -> None:
         """Handle new rows in the panel's report list like pushed reports.
@@ -197,6 +230,9 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not due and not (changed and self._report_failures == 0):
             return
         self._reports_read_at = now
+        # Faults change when the panel reports something, so they are read
+        # at the same times as the report list.
+        await self._async_read_faults()
         try:
             reports = await self._client.async_get_reports(REPORT_ROWS)
         except TrueguardError as err:

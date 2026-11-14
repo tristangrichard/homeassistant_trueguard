@@ -61,7 +61,12 @@ DEFAULT_SCAN_INTERVAL = 5
 MIN_SCAN_INTERVAL = 1
 MAX_SCAN_INTERVAL = 3600
 DOMAIN = "trueguard"
-PLATFORMS = [Platform.ALARM_CONTROL_PANEL, Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS = [
+    Platform.ALARM_CONTROL_PANEL,
+    Platform.BINARY_SENSOR,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 # Keys in hass.data[DOMAIN][entry_id].
 DATA_CLIENT = "client"

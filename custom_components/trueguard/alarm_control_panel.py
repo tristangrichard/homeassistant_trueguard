@@ -32,7 +32,7 @@ from .reports import action_for
 _LOGGER = logging.getLogger(__name__)
 
 # A reported alarm shows as triggered at most this long without a restore,
-# arm, or disarm.
+# arm, or disarm: the panel's siren time when it is known, else this.
 TRIGGERED_MAX = timedelta(hours=1)
 
 ISSUE_TRACKER = "https://github.com/tristangrichard/homeassistant_trueguard/issues"
@@ -176,6 +176,8 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
     def extra_state_attributes(self):
         """The panel's own mode text, and the newest reported alarm."""
         attributes = {"panel_mode": self._panel_mode()}
+        if seconds := self._data.get("siren_seconds"):
+            attributes["siren_time"] = seconds
         if self._last_alarm:
             attributes.update(self._last_alarm)
         return attributes
@@ -217,6 +219,7 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
         return (
             self._attr_alarm_state,
             self._panel_mode(),
+            self._data.get("siren_seconds"),
             tuple((self._last_alarm or {}).items()),
         )
 
@@ -255,7 +258,7 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
                 "zone": action.zone,
                 "burglary": action.burglary,
                 "mode": self._polled_state,
-                "until": dt_util.utcnow() + TRIGGERED_MAX,
+                "until": dt_util.utcnow() + self._triggered_max(),
             }
             self._start_expiry_timer()
         elif action.kind == "restore":
@@ -299,8 +302,14 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
             self._cancel_expiry()
             self._cancel_expiry = None
 
+    def _triggered_max(self) -> timedelta:
+        """How long a reported alarm shows as triggered at most."""
+        if seconds := self._data.get("siren_seconds"):
+            return timedelta(seconds=seconds)
+        return TRIGGERED_MAX
+
     def _start_expiry_timer(self) -> None:
-        """Clear a reported alarm after TRIGGERED_MAX even if nothing else changes."""
+        """Clear a reported alarm when it runs out, even if nothing else changes."""
         self._cancel_expiry_timer()
 
         @callback

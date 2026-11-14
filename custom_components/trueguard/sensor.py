@@ -53,14 +53,15 @@ class TrueguardGsmSignal(TrueguardEntity, SensorEntity):
 class TrueguardZoneSignal(TrueguardEntity, SensorEntity):
     """Radio signal level of one zone (the number in e.g. "Stærk, 7").
 
-    Disabled by default; the same value is also an attribute of the zone's
-    main sensor.
+    Disabled by default; enable it for the zones whose signal you want to
+    follow.
     """
 
     _attr_icon = "mdi:signal"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_registry_enabled_default = False
+    _unrecorded_attributes = frozenset({"signal_text"})
 
     def __init__(self, coordinator, sensor_id, zone_name) -> None:
         self._sensor_id = sensor_id
