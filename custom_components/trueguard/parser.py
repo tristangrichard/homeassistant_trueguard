@@ -31,6 +31,10 @@ MODERN_VERSIONS = ("GATE-03", DEVICE_SMART_HOME)
 # pythonegardia (MIT), see THIRD_PARTY_NOTICES.
 SENSOR_TYPES_TO_IGNORE = ("Remote Controller", "Remote Keypad", "Keypad")
 UNAUTHORIZED_MESSAGES = ("Unauthorized", "Access Denied")
+# The panel sometimes answers a request with a plain-text session error, for
+# example "Adgang nægtet: Sessionen er udløbet!", and has then done nothing.
+# Asking again works.
+SESSION_EXPIRED_MESSAGES = ("Adgang nægtet", "Sessionen er udløbet", "Session expired")
 
 GATE03_STATES_MAPPING = {
     "FULL ARM": "ARM",
@@ -42,7 +46,7 @@ GATE03_STATES_MAPPING = {
 SMARTHOME_STATES_MAPPING = {
     "FRAKOBLET": "DISARM",
     "DELTILKOBLING 1": "HOME",
-    "DELTILKOBLING 2": "HOME",
+    "DELTILKOBLING 2": "NIGHT",
     "DELTILKOBLING 3": "HOME",
     "FULDSIKRING": "ARM",
 }
@@ -51,6 +55,8 @@ SMARTHOME_STATES_MAPPING = {
 MODE_PREFIXES = (
     ("FRAKOBL", "DISARM"),
     ("DISARM", "DISARM"),
+    ("DELTILKOBLING 2", "NIGHT"),
+    ("DELTILKOBLET 2", "NIGHT"),
     ("DELTILKOBL", "HOME"),
     ("HOME ARM", "HOME"),
     ("FULDSIKR", "ARM"),
@@ -87,6 +93,8 @@ def map_mode(mapping: dict[str, str], status: str) -> str:
 ARM_AWAY_MODE = {"WV-1716": 0, "GATE-01": 0, "GATE-02": 0, "GATE-03": 1, DEVICE_SMART_HOME: 1}
 ARM_HOME_MODE = {"WV-1716": 1, "GATE-01": 1, "GATE-02": 1, "GATE-03": 2, DEVICE_SMART_HOME: 2}
 DISARM_MODE = {"WV-1716": 2, "GATE-01": 4, "GATE-02": 4, "GATE-03": 0, DEVICE_SMART_HOME: 0}
+# Partial arm 2 ("Deltilkobling 2"), tested on a SMARTHOME panel only.
+ARM_NIGHT_MODE = {DEVICE_SMART_HOME: 3}
 
 # Sensor type codes.
 TYPE_REMOTE = 2
@@ -133,8 +141,17 @@ class PanelParseError(TrueguardError):
     """The panel answered with something that could not be understood."""
 
 
+class SessionExpiredError(TrueguardError):
+    """The panel answered with a session error and did not act on the request."""
+
+
 class CommandRejectedError(TrueguardError):
     """The panel answered an arm or disarm command with a failure result."""
+
+
+def is_session_expired(text: str) -> bool:
+    """Return True if the panel's answer is a session error."""
+    return any(msg in text for msg in SESSION_EXPIRED_MESSAGES)
 
 
 def is_unauthorized(text: str) -> bool:

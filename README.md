@@ -6,7 +6,9 @@ rewritten; the small parts that remain are listed in
 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
 
 ## What's included
-- Alarm control panel entity (arm away, arm home, disarm).
+- Alarm control panel entity (arm away, arm home, disarm, and on SMARTHOME
+  panels arm night). Partial arm 1 and 3 show as **armed home**, partial arm 2
+  (`Deltilkobling 2`) as **armed night**.
 - Binary sensors for door, motion, smoke and related device types.
 - Per-sensor health/diagnostic values as attributes on the main sensor entity:
   - `battery_ok`
