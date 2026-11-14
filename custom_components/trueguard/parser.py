@@ -464,6 +464,33 @@ def parse_report_list(text: str) -> list[dict[str, Any]]:
     return reports
 
 
+# Report list statuses that mean the report is still being sent.
+_PENDING_STATUS_WORDS = ("vent", "pending", "wait")
+# ... and that mean it could not be delivered, for example "Fejlede".
+_FAILED_STATUS_WORDS = ("fejl", "fail", "error", "ingen forbindelse")
+
+
+def report_delivery(reports: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return whether the newest finished report could be delivered.
+
+    reports is parse_report_list's answer, newest first. Returns None when no
+    row has a delivery status, for example on a panel that reports nowhere.
+    """
+    for report in reports:
+        status = report["status"].strip()
+        text = status.casefold()
+        if not text or any(word in text for word in _PENDING_STATUS_WORDS):
+            continue
+        return {
+            "failed": any(word in text for word in _FAILED_STATUS_WORDS),
+            "status": status,
+            "message": report["message"],
+            "code": report["code"],
+            "time": report["time"],
+        }
+    return None
+
+
 # --- panelCondPost --------------------------------------------------------------
 
 def parse_command_result(text: str) -> str:

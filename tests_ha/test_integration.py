@@ -33,12 +33,12 @@ REFUSED = """{
 
 
 
-def report_row(uid, cid, zone=4, new_event="Trigger", message="Indbrud"):
+def report_row(uid, cid, zone=4, new_event="Trigger", message="Indbrud", status="Færdig"):
     """A row of the report list as the panel answers it."""
     return (
         f'{{"uid": {uid}, "device_id": "RF:00e5ec10", "area": 1, "zone_user": {zone}, '
         f'"new_event": "{new_event}", "cid_event": "{cid}", "message": "{message}", '
-        f'"time": "2026-11-14 10:00:00", "status": "Færdig", "comment": ""}}'
+        f'"time": "2026-11-14 10:00:00", "status": "{status}", "comment": ""}}'
     )
 
 
@@ -514,3 +514,56 @@ async def test_report_list_unsupported(hass, aioclient_mock):
         assert report_reads(aioclient_mock) == 0
     assert reads == 2  # the first read, retried once
     assert hass.states.get(ALARM).state == "disarmed"
+
+
+# --- Reporting and zone faults -------------------------------------------------
+
+REPORTING = f"trueguard_{KEY}_panel_reporting"
+
+
+async def test_reporting_failed_sensor(hass, aioclient_mock):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    reporting = entity_id_of(hass, "binary_sensor", REPORTING)
+    assert hass.states.get(reporting).state == "off"
+
+    answer(
+        aioclient_mock,
+        sensors=OPENED,
+        reports=report_list(
+            report_row(11, "602", zone=0, message="Periodisk test", status="Fejlede"),
+            report_row(10, "602", zone=0, message="Periodisk test"),
+        ),
+    )
+    await coordinator_of(hass, entry).async_refresh()
+    state = hass.states.get(reporting)
+    assert state.state == "on"
+    assert state.attributes["status"] == "Fejlede"
+    assert state.attributes["report"] == "Periodisk test"
+
+
+async def test_no_reporting_sensor_without_report_list(hass, aioclient_mock):
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
+    aioclient_mock.post(f"{BASE}reportEventListGet", status=404)
+    await setup(hass)
+    assert entity_id_of(hass, "binary_sensor", REPORTING) is None
+
+
+async def test_zone_fault_sensor(hass, aioclient_mock):
+    answer(aioclient_mock)
+    entry = await setup(hass)
+    fault = entity_id_of(hass, "binary_sensor", f"trueguard_{KEY}_zone_{DOOR}_fault")
+    assert hass.states.get(fault).state == "off"
+    assert hass.states.get(fault).name.endswith("Zone 04 dør fault")
+
+    faulty = SENSORS.replace(
+        '"name": "Zone 04 dør", \n"cond": "", "cond_ok": "1"',
+        '"name": "Zone 04 dør", \n"cond": "Funktionsfejl", "cond_ok": "0"',
+    )
+    assert faulty != SENSORS
+    answer(aioclient_mock, sensors=faulty)
+    await coordinator_of(hass, entry).async_refresh()
+    state = hass.states.get(fault)
+    assert state.state == "on"
+    assert state.attributes["panel_status"] == "Funktionsfejl"

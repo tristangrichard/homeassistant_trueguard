@@ -105,6 +105,7 @@ async def async_setup_entry(
         _build_zone_entities(coordinator)
         + _build_panel_entities(coordinator)
         + _build_zone_problem_entities(coordinator)
+        + _build_reporting_entities(coordinator)
     )
 
 
@@ -232,16 +233,57 @@ class TrueguardPanelFlag(TrueguardEntity, BinarySensorEntity):
         return (self._attr_is_on, tuple(self._attr_extra_state_attributes.items()))
 
 
-# --- Per-zone battery and tamper ------------------------------------------------
+# --- Reporting --------------------------------------------------------------------
+
+def _build_reporting_entities(coordinator):
+    """A reporting sensor, when the panel's report list shows delivery."""
+    if "report_delivery" not in (coordinator.data or {}):
+        return []
+    return [TrueguardReportingFailed(coordinator)]
+
+
+class TrueguardReportingFailed(TrueguardEntity, BinarySensorEntity):
+    """On when the panel could not deliver its newest report.
+
+    The panel sends its reports to TrueConnect, a monitoring centre, or Home
+    Assistant's report receiver; its report list shows whether each arrived.
+    """
+
+    _attr_name = "Trueguard Reporting"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"trueguard_{self._client.device_key}_panel_reporting"
+
+    def _refresh(self) -> None:
+        delivery = self._data.get("report_delivery") or {}
+        failed = delivery.get("failed")
+        self._attr_is_on = None if failed is None else bool(failed)
+        self._attr_extra_state_attributes = {
+            "status": delivery.get("status"),
+            "report": delivery.get("message"),
+            "code": delivery.get("code"),
+            "report_time": delivery.get("time"),
+        }
+
+    def _value(self):
+        return (self._attr_is_on, tuple(self._attr_extra_state_attributes.items()))
+
+
+# --- Per-zone battery, tamper, and fault ------------------------------------------
 
 ZONE_FLAGS = (
     ("battery_ok", "battery", BinarySensorDeviceClass.BATTERY, "battery"),
     ("tamper_ok", "tamper", BinarySensorDeviceClass.TAMPER, "tamper"),
+    # The panel shows cond / cond_ok as the zone's "Tilstand" (condition).
+    ("cond_ok", "fault", BinarySensorDeviceClass.PROBLEM, "cond"),
 )
 
 
 def _build_zone_problem_entities(coordinator):
-    """Create a battery and a tamper sensor for each zone that reports them."""
+    """Create battery, tamper, and fault sensors for each zone that reports them."""
     sensors = (coordinator.data or {}).get("sensors", {})
     return [
         TrueguardZoneFlag(coordinator, sensor_id, sensor.get("name") or str(sensor_id), *flag)
@@ -252,7 +294,7 @@ def _build_zone_problem_entities(coordinator):
 
 
 class TrueguardZoneFlag(TrueguardEntity, BinarySensorEntity):
-    """Low battery or tamper for one zone. On means there is a problem."""
+    """Low battery, tamper, or a fault for one zone. On means there is a problem."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
