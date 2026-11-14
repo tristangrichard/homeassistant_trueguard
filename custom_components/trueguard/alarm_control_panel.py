@@ -19,13 +19,13 @@ from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from . import (
-    CONF_REPORT_SERVER_ENABLED,
     DATA_COORDINATOR,
     DEFAULT_NAME,
     DOMAIN,
     device_key,
 )
 from .api import TrueguardError
+from .coordinator import REPORT_LIST
 from .entity import TrueguardEntity
 from .reports import action_for
 
@@ -88,7 +88,6 @@ async def async_setup_entry(
             TrueguardAlarm(
                 entry_data[DATA_COORDINATOR],
                 conf.get(CONF_NAME, DEFAULT_NAME),
-                conf.get(CONF_REPORT_SERVER_ENABLED, False),
                 unique_id=f"trueguard_{device_key(conf)}",
             )
         ]
@@ -107,10 +106,9 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
         | AlarmControlPanelEntityFeature.ARM_AWAY
     )
 
-    def __init__(self, coordinator, name: str, reports_enabled: bool, unique_id: str):
+    def __init__(self, coordinator, name: str, unique_id: str):
         self._attr_name = name
         self._attr_unique_id = unique_id
-        self._reports_enabled = reports_enabled
         self._attr_alarm_state: AlarmControlPanelState | None = None
         self._polled_state: AlarmControlPanelState | None = None
         self._passing_state: AlarmControlPanelState | None = None
@@ -124,10 +122,9 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
         """Restore a reported alarm and listen for reports pushed by the panel."""
         await self._async_restore()
         await super().async_added_to_hass()
-        if self._reports_enabled:
-            self.async_on_remove(
-                self.coordinator.async_add_report_listener(self._async_handle_report)
-            )
+        self.async_on_remove(
+            self.coordinator.async_add_report_listener(self._async_handle_report)
+        )
         self.async_on_remove(self._cancel_expiry_timer)
 
     async def _async_restore(self) -> None:
@@ -258,6 +255,10 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
             ):
                 self._clear_triggered()
         elif action.kind in REPORT_STATES:
+            if report.format == REPORT_LIST:
+                # The polled mode already shows arming and disarming, and
+                # the report list's wording for them has not been seen.
+                return
             self._clear_triggered()
             self._passing_state = None
             self._polled_state = REPORT_STATES[action.kind]

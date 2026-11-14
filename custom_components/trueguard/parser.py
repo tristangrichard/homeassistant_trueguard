@@ -423,6 +423,47 @@ def sensor_is_on(sensor: dict[str, Any] | None, version: str) -> bool | None:
     return None
 
 
+# --- reportEventListGet ---------------------------------------------------------
+
+# The report list's "new_event" column to a Contact ID qualifier.
+_REPORT_QUALIFIERS = {"trigger": "1", "ok": "3", "restore": "3"}
+
+
+def parse_report_list(text: str) -> list[dict[str, Any]]:
+    """Return the panel's report list (Contact ID events), newest first.
+
+    Each row is {"uid", "qualifier", "code", "area", "zone", "message",
+    "time", "status"}. The uid grows with every report, so it shows which rows
+    are new; the time comes from the panel clock and can be wrong.
+    """
+    if is_unauthorized(text):
+        raise UnauthorizedError("The panel rejected the login")
+    rows = find_key(loads_panel_json(text), "rptrows")
+    if not isinstance(rows, list):
+        raise PanelParseError("No rptrows in panel report list answer")
+    reports = []
+    for row in rows:
+        if not isinstance(row, dict) or (uid := _as_int(row.get("uid"))) is None:
+            continue
+        code = str(row.get("cid_event") or "").strip()
+        reports.append(
+            {
+                "uid": uid,
+                "qualifier": _REPORT_QUALIFIERS.get(
+                    str(row.get("new_event") or "").strip().casefold(), ""
+                ),
+                "code": code.zfill(3) if code.isdigit() else code,
+                "area": _as_int(row.get("area")),
+                "zone": _as_int(row.get("zone_user")),
+                "message": str(row.get("message") or "").strip(),
+                "time": str(row.get("time") or ""),
+                "status": str(row.get("status") or ""),
+            }
+        )
+    reports.sort(key=lambda report: report["uid"], reverse=True)
+    return reports
+
+
 # --- panelCondPost --------------------------------------------------------------
 
 def parse_command_result(text: str) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import timedelta
 import logging
+from time import monotonic
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -15,8 +16,22 @@ from .api import TrueguardClient, TrueguardError, UnauthorizedError, VersionErro
 from .receiver import PushReport
 from .reports import code_text
 
-# Fired on the event bus for every report the panel pushes.
+# Fired on the event bus for every report the panel pushes, and for every new
+# row in its report list.
 EVENT_TRUEGUARD_REPORT = "trueguard_report"
+
+# PushReport.format of a row read from the panel's report list.
+REPORT_LIST = "LIST"
+# Rows read from the report list each time. The panel adds a row for every
+# alarm, restore, and fault report; more new rows than this between two reads
+# means the oldest of them are missed.
+REPORT_ROWS = 20
+# Seconds between reads of the report list when nothing else changed. It is
+# also read at once whenever the alarm state or a zone changes.
+REPORT_INTERVAL = 60
+# A pushed report shows up in the report list too; within this many seconds,
+# that row is not handled a second time.
+PUSH_MATCH = 600
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +60,13 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # reloading, so a one-off glitch in the panel's answer is ignored.
         self._pending_zones: set[Any] | None = None
         self._reload_scheduled = False
+        # Newest report list uid already handled; rows already in the list
+        # when the integration starts are not handled.
+        self._last_report_uid: int | None = None
+        self._reports_read_at: float | None = None
+        self._report_failures = 0
+        # (monotonic time, (qualifier, code, zone)) of recent pushed reports.
+        self._recent_pushes: list[tuple[float, tuple]] = []
         super().__init__(
             hass,
             _LOGGER,
@@ -63,6 +85,11 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def client(self) -> TrueguardClient:
         """The panel client."""
         return self._client
+
+    @property
+    def last_report_uid(self) -> int | None:
+        """Newest report list row handled, for diagnostics."""
+        return self._last_report_uid
 
     def zone_name(self, zone: int | None) -> str | None:
         """Name of the sensor in a zone number, if known."""
@@ -92,6 +119,16 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def async_handle_report(self, report: PushReport) -> None:
         """Handle a report pushed by the panel (runs on the event loop)."""
+        if report.cid:
+            self._recent_pushes.append((monotonic(), _report_key(report)))
+        self._async_dispatch_report(report)
+        if report.format != "NULL":
+            # Read the panel at once so sensors and the mode catch up.
+            self.hass.async_create_task(self.async_request_refresh())
+
+    @callback
+    def _async_dispatch_report(self, report: PushReport) -> None:
+        """Fire the report event and tell the listeners."""
         zone_name = self.zone_name(report.zone)
         _LOGGER.debug("Trueguard report %s (zone %s %s)", report, report.zone, zone_name)
         self.hass.bus.async_fire(
@@ -112,9 +149,6 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         for listener in list(self._report_listeners):
             listener(report, zone_name)
-        if report.format != "NULL":
-            # Read the panel at once so sensors and the mode catch up.
-            self.hass.async_create_task(self.async_request_refresh())
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch latest alarm state and sensors from panel."""
@@ -132,7 +166,63 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except TrueguardError as err:
             raise UpdateFailed(f"Failed to refresh Trueguard panel data: {err}") from err
         self._check_zones(data)
+        await self._async_check_report_list(data)
         return data
+
+    async def _async_check_report_list(self, data: dict[str, Any]) -> None:
+        """Handle new rows in the panel's report list like pushed reports.
+
+        Read every REPORT_INTERVAL, and at once when the alarm state or a zone
+        changed, so an alarm shows up even without the push receiver. A panel
+        that cannot answer is only asked again every REPORT_INTERVAL.
+        """
+        now = monotonic()
+        changed = self.data is not None and data != self.data
+        due = (
+            self._reports_read_at is None
+            or now - self._reports_read_at >= REPORT_INTERVAL
+        )
+        if not due and not (changed and self._report_failures == 0):
+            return
+        self._reports_read_at = now
+        try:
+            reports = await self._client.async_get_reports(REPORT_ROWS)
+        except TrueguardError as err:
+            self._report_failures += 1
+            _LOGGER.debug("Could not read the Trueguard report list: %s", err)
+            return
+        self._report_failures = 0
+        newest = reports[0]["uid"] if reports else 0
+        if self._last_report_uid is None or newest < self._last_report_uid:
+            # First read, or the panel's list was cleared.
+            self._last_report_uid = newest
+            return
+        new = [row for row in reports if row["uid"] > self._last_report_uid]
+        self._last_report_uid = newest
+        for row in reversed(new):
+            report = PushReport(
+                format=REPORT_LIST,
+                qualifier=row["qualifier"],
+                code=row["code"],
+                group=row["area"],
+                zone=row["zone"],
+                raw=row["message"],
+            )
+            if not self._take_recent_push(report):
+                self._async_dispatch_report(report)
+
+    def _take_recent_push(self, report: PushReport) -> bool:
+        """Return True, once, if this report was pushed a short while ago."""
+        cutoff = monotonic() - PUSH_MATCH
+        self._recent_pushes = [
+            (when, key) for when, key in self._recent_pushes if when >= cutoff
+        ]
+        key = _report_key(report)
+        for index, (_, pushed) in enumerate(self._recent_pushes):
+            if pushed == key:
+                del self._recent_pushes[index]
+                return True
+        return False
 
     def _check_zones(self, data: dict[str, Any]) -> None:
         """Reload when zones were added or removed on the panel.
@@ -162,3 +252,8 @@ class TrueguardCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._reload_scheduled = True
         self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
+
+
+def _report_key(report: PushReport) -> tuple:
+    """What identifies the same report pushed and in the report list."""
+    return (report.qualifier, report.code, report.zone)

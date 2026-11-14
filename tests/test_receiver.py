@@ -172,3 +172,8 @@ def test_action_for(qualifier, code, kind, burglary):
 def test_code_text():
     assert A.code_text("130") == "Burglary"
     assert A.code_text("999") == "Contact ID 999"
+
+
+def test_panel_tamper_is_not_an_alarm():
+    assert A.action_for("1", "137").kind == "none"
+    assert A.action_for("1", "131").kind == "alarm"

@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_capture_events,
     mock_restore_cache_with_extra_data,
 )
 
@@ -29,6 +30,25 @@ REFUSED = """{
   "message" : "Kunne ikke skifte tilstand : Område1Zone4(Stue  Door  1) DC åbnet"
 }"""
 
+
+
+
+def report_row(uid, cid, zone=4, new_event="Trigger", message="Indbrud"):
+    """A row of the report list as the panel answers it."""
+    return (
+        f'{{"uid": {uid}, "device_id": "RF:00e5ec10", "area": 1, "zone_user": {zone}, '
+        f'"new_event": "{new_event}", "cid_event": "{cid}", "message": "{message}", '
+        f'"time": "2026-11-14 10:00:00", "status": "Færdig", "comment": ""}}'
+    )
+
+
+def report_list(*rows):
+    return '{\n  "rptrows": [\n' + ",\n".join(rows) + "]\n}"
+
+
+# The report list when the integration starts: rows already in it are not handled.
+REPORTS = report_list(report_row(10, "602", zone=0, message="Periodisk test"))
+
 BASE = "http://192.0.2.10:80/action/"
 KEY = "192.0.2.10_80"
 ALARM = "alarm_control_panel.trueguard"
@@ -44,9 +64,12 @@ DATA = {
 }
 
 
-def answer(aioclient_mock, mode="Frakoblet", sensors=SENSORS, result="1"):
+def answer(
+    aioclient_mock, mode="Frakoblet", sensors=SENSORS, result="1", reports=REPORTS
+):
     """Make the mocked panel answer with this state."""
     aioclient_mock.clear_requests()
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=reports)
     aioclient_mock.get(
         f"{BASE}panelCondGet",
         text=PANEL.replace('"mode_a1" : "Frakoblet"', f'"mode_a1" : "{mode}"'),
@@ -101,6 +124,7 @@ async def test_reconfigure_keeps_identity(hass, aioclient_mock, caplog):
 
     aioclient_mock.get("http://192.0.2.11:80/action/panelCondGet", text=PANEL)
     aioclient_mock.get("http://192.0.2.11:80/action/deviceListGet", text=SENSORS)
+    aioclient_mock.post("http://192.0.2.11:80/action/reportEventListGet", text=REPORTS)
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -154,6 +178,7 @@ async def test_rejected_command_shows_the_panels_reason(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
     aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
     aioclient_mock.post(f"{BASE}panelCondPost", text=REFUSED)
+    aioclient_mock.post(f"{BASE}reportEventListGet", text=REPORTS)
     await setup(hass)
     with pytest.raises(HomeAssistantError, match="did not accept.*Zone4.*åbnet"):
         await hass.services.async_call(
@@ -335,3 +360,145 @@ async def test_device_keeps_entry_name(hass, aioclient_mock):
     registry = dr.async_get(hass)
     [device] = dr.async_entries_for_config_entry(registry, entry.entry_id)
     assert device.name == "Sommerhus"
+
+
+# --- Report list --------------------------------------------------------------
+
+# The door zone, opened: any change in the panel's answer reads the report list.
+OPENED = SENSORS.replace(
+    '"id": "RF:00e5ec10", "su": 1,"attr": 0, "st": 2',
+    '"id": "RF:00e5ec10", "su": 1,"attr": 0, "st": 3',
+)
+
+
+def report_reads(aioclient_mock):
+    return sum(1 for call in aioclient_mock.mock_calls if "reportEventListGet" in str(call[1]))
+
+
+async def test_report_list_alarm_triggers(hass, aioclient_mock):
+    answer(aioclient_mock, "Fuldsikring")
+    entry = await setup(hass)
+    events = async_capture_events(hass, "trueguard_report")
+    coordinator = coordinator_of(hass, entry)
+
+    answer(
+        aioclient_mock,
+        "Fuldsikring",
+        sensors=OPENED,
+        reports=report_list(
+            report_row(11, "131", message="Indbrud (Perimeter)"),
+            report_row(10, "602", zone=0, message="Periodisk test"),
+        ),
+    )
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    state = hass.states.get(ALARM)
+    assert state.state == "triggered"
+    assert state.attributes["alarm_zone"] == 4
+    assert state.attributes["alarm_zone_name"] == "Zone 04 dør"
+    assert [(e.data["format"], e.data["cid"]) for e in events] == [("LIST", "1131")]
+
+    # Disarming at the panel ends it.
+    answer(aioclient_mock, "Frakoblet", sensors=OPENED)
+    await coordinator.async_refresh()
+    assert hass.states.get(ALARM).state == "disarmed"
+
+
+async def test_report_list_rows_at_startup_are_not_handled(hass, aioclient_mock):
+    answer(aioclient_mock, "Fuldsikring", reports=report_list(report_row(10, "131")))
+    await setup(hass)
+    assert hass.states.get(ALARM).state == "armed_away"
+
+
+async def test_report_list_panel_tamper_is_not_an_alarm(hass, aioclient_mock):
+    answer(aioclient_mock, "Fuldsikring")
+    entry = await setup(hass)
+    events = async_capture_events(hass, "trueguard_report")
+    answer(
+        aioclient_mock,
+        "Fuldsikring",
+        sensors=OPENED,
+        reports=report_list(report_row(11, "137", zone=0, message="Panel sabotage")),
+    )
+    await coordinator_of(hass, entry).async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(ALARM).state == "armed_away"
+    assert [e.data["description"] for e in events] == ["Tamper"]
+
+
+async def test_report_list_ignores_arming_rows(hass, aioclient_mock):
+    answer(aioclient_mock, "Fuldsikring")
+    entry = await setup(hass)
+    answer(
+        aioclient_mock,
+        "Fuldsikring",
+        sensors=OPENED,
+        reports=report_list(report_row(11, "401", zone=1, message="Frakoblet")),
+    )
+    await coordinator_of(hass, entry).async_refresh()
+    assert hass.states.get(ALARM).state == "armed_away"
+
+
+async def test_report_list_read_on_change_or_interval(hass, aioclient_mock):
+    answer(aioclient_mock)
+    with patch("custom_components.trueguard.coordinator.monotonic", return_value=1000):
+        entry = await setup(hass)
+        coordinator = coordinator_of(hass, entry)
+        assert report_reads(aioclient_mock) == 1
+
+        # Nothing changed: not read again.
+        await coordinator.async_refresh()
+        assert report_reads(aioclient_mock) == 1
+
+        # A zone changed: read at once.
+        answer(aioclient_mock, sensors=OPENED)
+        await coordinator.async_refresh()
+        assert report_reads(aioclient_mock) == 1  # counted since answer() cleared
+
+    with patch("custom_components.trueguard.coordinator.monotonic", return_value=1061):
+        answer(aioclient_mock, sensors=OPENED)
+        await coordinator.async_refresh()
+        assert report_reads(aioclient_mock) == 1
+
+
+async def test_report_list_skips_pushed_reports(hass, aioclient_mock):
+    answer(aioclient_mock, "Fuldsikring")
+    entry = await setup(hass)
+    coordinator = coordinator_of(hass, entry)
+    events = async_capture_events(hass, "trueguard_report")
+
+    coordinator.async_handle_report(
+        PushReport(format="ADM-CID", qualifier="1", code="131", group=1, zone=4)
+    )
+    answer(
+        aioclient_mock,
+        "Fuldsikring",
+        sensors=OPENED,
+        reports=report_list(report_row(11, "131"), report_row(10, "602", zone=0)),
+    )
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert [e.data["format"] for e in events] == ["ADM-CID"]
+    assert hass.states.get(ALARM).state == "triggered"
+
+
+async def test_report_list_unsupported(hass, aioclient_mock):
+    answer(aioclient_mock)
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+    aioclient_mock.get(f"{BASE}deviceListGet", text=SENSORS)
+    aioclient_mock.post(f"{BASE}reportEventListGet", status=404)
+    with patch("custom_components.trueguard.coordinator.monotonic", return_value=1000):
+        entry = await setup(hass)
+        assert entry.state is ConfigEntryState.LOADED
+        reads = report_reads(aioclient_mock)
+
+        # A failed read is not repeated on every change, only per interval.
+        aioclient_mock.clear_requests()
+        aioclient_mock.get(f"{BASE}panelCondGet", text=PANEL)
+        aioclient_mock.get(f"{BASE}deviceListGet", text=OPENED)
+        aioclient_mock.post(f"{BASE}reportEventListGet", status=404)
+        await coordinator_of(hass, entry).async_refresh()
+        assert report_reads(aioclient_mock) == 0
+    assert reads == 2  # the first read, retried once
+    assert hass.states.get(ALARM).state == "disarmed"

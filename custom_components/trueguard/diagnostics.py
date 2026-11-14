@@ -39,6 +39,9 @@ async def async_get_config_entry_diagnostics(
             "running": receiver is not None,
             "port": getattr(receiver, "bound_port", None),
         },
+        "report_list": {
+            "last_uid": coordinator.last_report_uid if coordinator else None,
+        },
         "panel": {
             "state": data.get("state"),
             "status": data.get("panel"),

@@ -73,7 +73,9 @@ SIA_TO_CID: dict[str, tuple[str, str]] = {
 class PushReport:
     """One alarm report received from the panel."""
 
-    format: str  # "ADM-CID", "SIA-DCS", "NULL", or "CID"
+    # "ADM-CID", "SIA-DCS", "NULL", or "CID"; "LIST" for a row of the
+    # panel's report list (coordinator.REPORT_LIST).
+    format: str
     account: str = ""
     crc_format: str = "hex"  # DC-09 CRC as 4 hex digits, or "bin" (2 raw bytes, Climax)
     qualifier: str = ""

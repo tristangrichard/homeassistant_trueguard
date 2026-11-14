@@ -292,3 +292,36 @@ def test_command_answers_from_a_real_panel():
     assert P.command_rejected(P.parse_command_result(refused))
     assert "Zone4" in P.parse_command_message(refused)
     assert P.parse_command_message('{"result" : 0}') == ""
+
+
+# Rows in the shape a SMARTHOME panel answers reportEventListGet (anonymised).
+REPORT_LIST = """{
+  "rptrows": [
+{"uid": 5130, "device_id": "RF:00000001", "area": 1, "zone_user": 14, "new_event": "ok", "cid_event": "383", "message": "Sabotage ok", "time": "2026-10-24 12:47:26", "status": "Færdig", "comment": ""},
+{"uid": 5131, "device_id": "", "area": 1, "zone_user": 3, "new_event": "Trigger", "cid_event": "131", "message": "Indbrud (Perimeter)", "time": "2026-10-24 13:00:00", "status": "Fejlede", "comment": ""},
+{"uid": 5123, "device_id": "", "area": 0, "zone_user": 0, "new_event": "Trigger", "cid_event": "305", "message": "System nulstillet", "time": "2023-06-29 19:40:07", "status": "Færdig", "comment": ""},
+{"uid": 5100, "device_id": "", "area": 0, "zone_user": 0, "new_event": "Noget nyt", "cid_event": "99", "message": "", "time": "", "status": "", "comment": ""}]
+}"""
+
+
+def test_report_list():
+    rows = P.parse_report_list(REPORT_LIST)
+    assert [row["uid"] for row in rows] == [5131, 5130, 5123, 5100]
+    assert rows[0] == {
+        "uid": 5131,
+        "qualifier": "1",
+        "code": "131",
+        "area": 1,
+        "zone": 3,
+        "message": "Indbrud (Perimeter)",
+        "time": "2026-10-24 13:00:00",
+        "status": "Fejlede",
+    }
+    assert rows[1]["qualifier"] == "3"  # "ok" is a restore
+    assert (rows[3]["qualifier"], rows[3]["code"]) == ("", "099")
+
+
+def test_report_list_empty_and_broken():
+    assert P.parse_report_list('{"rptrows": [\n]}') == []
+    with pytest.raises(P.PanelParseError):
+        P.parse_report_list('{"result": 1}')

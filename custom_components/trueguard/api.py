@@ -22,6 +22,7 @@ from .parser import (
     parse_command_message,
     parse_command_result,
     parse_panel_status,
+    parse_report_list,
     parse_sensor_list,
     sensor_is_on,
     sensor_list_action,
@@ -63,7 +64,7 @@ def _decode(body: bytes, charset: str | None) -> str:
 class TrueguardClient:
     """Talk to the panel over its local HTTP API using a shared aiohttp session.
 
-    Reads (GET) are retried once on network errors. Commands (POST) are never
+    Reads are retried once on network errors. Commands (POST) are never
     retried on network errors, because the panel may already have acted on
     them. Both are retried once if the panel answers "Unauthorized", which
     some panels do now and then; a rejected request has no effect.
@@ -135,9 +136,19 @@ class TrueguardClient:
         return text
 
     async def _request(
-        self, method: str, action: str, data: dict[str, Any] | None = None
+        self,
+        method: str,
+        action: str,
+        data: dict[str, Any] | None = None,
+        read: bool | None = None,
     ) -> str:
-        """Send a request with the retry rules described on the class."""
+        """Send a request with the retry rules described on the class.
+
+        read marks a request that changes nothing, so it can be retried after
+        a network error; by default only GET requests are.
+        """
+        if read is None:
+            read = method == "GET"
         retried_auth = False
         retried_network = False
         while True:
@@ -148,7 +159,7 @@ class TrueguardClient:
                     raise
                 retried_auth = True
             except TrueguardConnectionError:
-                if method != "GET" or retried_network:
+                if not read or retried_network:
                     raise
                 retried_network = True
                 _LOGGER.debug("Retrying %s after a network error", action)
@@ -185,6 +196,17 @@ class TrueguardClient:
             raise errors[0]
         (state, panel), sensors = results
         return {"state": state, "panel": panel, "sensors": sensors}
+
+    async def async_get_reports(self, max_count: int = 20) -> list[dict[str, Any]]:
+        """Return the newest rows of the panel's report list, newest first.
+
+        A read, although the panel's own page asks for it with a POST, so it
+        is retried like the other reads.
+        """
+        text = await self._request(
+            "POST", "reportEventListGet", {"max_count": str(max_count)}, read=True
+        )
+        return parse_report_list(text)
 
     def sensor_is_on(self, sensor: dict[str, Any] | None) -> bool | None:
         """Return whether a sensor is open/triggered for this panel version."""
