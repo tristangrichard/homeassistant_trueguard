@@ -52,9 +52,9 @@ CODE_TEXT: dict[str, str] = {
 # Codes that mean "an alarm is going on" (qualifier 1).
 _ALARM_RANGE = range(100, 170)
 # Shown as an event, but never as a triggered alarm: duress and silent panic
-# are silent by design, and 143-149 are expansion-module, sensor-tamper, and
-# supervision troubles rather than alarms.
-_SILENT_ALARMS = {"121", "122", "143", "144", "145", "146", "147", "148", "149"}
+# are silent by design, and 137 (panel tamper) and 143-149 are panel tamper,
+# expansion-module, sensor-tamper, and supervision troubles rather than alarms.
+_SILENT_ALARMS = {"121", "122", "137", "143", "144", "145", "146", "147", "148", "149"}
 # Burglary alarms stay triggered until the panel is armed or disarmed again;
 # other alarms (fire, water, panic, ...) also clear when the zone restores.
 _BURGLARY_RANGE = range(130, 140)

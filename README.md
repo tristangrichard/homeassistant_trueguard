@@ -79,9 +79,18 @@ Home Assistant.
 - If the panel rejects the saved password, Home Assistant asks you to sign in
   again.
 
+### Alarms from the panel's report list
+The integration also reads the panel's report list (**Rapport hændelser**,
+the Contact ID events the panel reports), so alarms show up without push
+reports. It is read once a minute, and at once whenever the alarm mode or a
+zone changes. Each new row is handled like a pushed report (see below), except
+arm and disarm rows: the polled mode already shows those. Rows already in the
+list when Home Assistant starts are not handled, so an alarm that happened
+while Home Assistant was off does not show. A panel without a report list is
+asked again once a minute and otherwise works as before.
+
 ### Push reports from the panel
-Without push reports, Home Assistant only learns what the panel is doing by
-polling. The panel's own alarm reporting (the feature it uses for TrueConnect
+Push reports arrive at once instead of on the next poll. The panel's own alarm reporting (the feature it uses for TrueConnect
 or a monitoring centre) can also send every alarm, arm/disarm, and fault
 report straight to Home Assistant.
 
@@ -110,13 +119,16 @@ How reports affect the alarm entity:
   zone restores.
 - A reported alarm clears after one hour at the latest. It survives a restart
   of Home Assistant, unless the panel was armed or disarmed in the meantime.
-- **Duress** and **silent panic** only fire the event, never show triggered.
+- **Duress**, **silent panic**, and **panel tamper** only fire the event,
+  never show triggered.
 - **Arm/disarm reports** update the alarm at once.
 - Every report also makes the integration read the panel straight away.
 
-Every report fires a `trueguard_report` event with `format`, `account`,
-`cid`, `qualifier`, `code`, `description`, `sia_code`, `group`, `zone`, and
-`zone_name`, for example:
+Every report, pushed or read from the report list, fires a `trueguard_report`
+event with `format` (`LIST` for the report list), `account`, `cid`,
+`qualifier`, `code`, `description`, `sia_code`, `group`, `zone`, and
+`zone_name`. A report that was pushed is not fired again when it shows up in
+the list. For example:
 
 ```yaml
 trigger:
