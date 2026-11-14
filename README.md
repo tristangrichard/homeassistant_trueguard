@@ -261,3 +261,10 @@ MIT, see [LICENSE](LICENSE). Parts from other projects are listed in
 - `manifest.json` declares the `security_safety.alarm_systems` category for the Marketplace.
 - Install steps for the Marketplace, HACS, and manual installation in the README.
 - CI runs HACS validation, hassfest, and the tests.
+
+## Release 2.8.0 highlights
+- Alarms show without the push receiver: the integration reads the panel's report list once a minute, and at once when the alarm mode, a zone, or a panel fault changes. New rows are handled like pushed reports and fire `trueguard_report` events with `format: LIST`.
+- Panel tamper (Contact ID 137) no longer shows the alarm as triggered; it only fires the event.
+- New **Reporting** sensor: on when the panel could not deliver its newest report to TrueConnect, a monitoring centre, or Home Assistant.
+- New **fault** sensor per zone, from the panel's zone condition ("Tilstand").
+- Report list reads are retried once after a network error, and diagnostics show the newest handled report.
