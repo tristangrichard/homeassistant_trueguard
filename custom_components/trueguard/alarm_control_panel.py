@@ -46,6 +46,7 @@ STATES = {
     "ARMHOME": AlarmControlPanelState.ARMED_HOME,
     "HOME": AlarmControlPanelState.ARMED_HOME,
     "NIGHT": AlarmControlPanelState.ARMED_NIGHT,
+    "CUSTOM": AlarmControlPanelState.ARMED_CUSTOM_BYPASS,
     "NIGHT HOME": AlarmControlPanelState.ARMED_NIGHT,
     "TRIGGERED": AlarmControlPanelState.TRIGGERED,
     "ARMING": AlarmControlPanelState.ARMING,
@@ -71,6 +72,7 @@ ICONS = {
     AlarmControlPanelState.DISARMED: "mdi:shield-off",
     AlarmControlPanelState.ARMED_HOME: "mdi:shield-home",
     AlarmControlPanelState.ARMED_NIGHT: "mdi:shield-home",
+    AlarmControlPanelState.ARMED_CUSTOM_BYPASS: "mdi:shield-half-full",
     AlarmControlPanelState.ARMED_AWAY: "mdi:shield-lock",
     AlarmControlPanelState.TRIGGERED: "mdi:bell-ring",
 }
@@ -111,6 +113,11 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
         if coordinator.client.supports_arm_night:
             self._attr_supported_features = (
                 self._attr_supported_features | AlarmControlPanelEntityFeature.ARM_NIGHT
+            )
+        if coordinator.client.supports_arm_custom_bypass:
+            self._attr_supported_features = (
+                self._attr_supported_features
+                | AlarmControlPanelEntityFeature.ARM_CUSTOM_BYPASS
             )
         self._attr_name = name
         self._attr_unique_id = unique_id
@@ -269,10 +276,14 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
             reported = REPORT_STATES[action.kind]
             if not (
                 reported == AlarmControlPanelState.ARMED_HOME
-                and self._polled_state == AlarmControlPanelState.ARMED_NIGHT
+                and self._polled_state
+                in (
+                    AlarmControlPanelState.ARMED_NIGHT,
+                    AlarmControlPanelState.ARMED_CUSTOM_BYPASS,
+                )
             ):
                 # Partial-arm reports do not say which partial arm; keep the
-                # polled night mode.
+                # polled night or custom bypass mode.
                 self._polled_state = reported
         else:
             return
@@ -326,6 +337,10 @@ class TrueguardAlarm(TrueguardEntity, AlarmControlPanelEntity, RestoreEntity):
     async def async_alarm_arm_night(self, code: str | None = None) -> None:
         """Send arm night (partial arm 2) command."""
         await self._async_send(self._client.async_arm_night, "arm night")
+
+    async def async_alarm_arm_custom_bypass(self, code: str | None = None) -> None:
+        """Send arm custom bypass (partial arm 3) command."""
+        await self._async_send(self._client.async_arm_custom_bypass, "arm custom bypass")
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Send arm away command."""

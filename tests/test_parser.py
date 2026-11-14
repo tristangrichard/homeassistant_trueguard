@@ -230,7 +230,7 @@ def test_signal_level(value, expected):
     [
         ("SMARTHOME", "Deltilkobling 2", "NIGHT"),
         ("SMARTHOME", "Deltilkoblet 2", "NIGHT"),
-        ("SMARTHOME", "Deltilkobling 3", "HOME"),
+        ("SMARTHOME", "Deltilkobling 3", "CUSTOM"),
         ("SMARTHOME", "Deltilkoblet 1", "HOME"),
         ("SMARTHOME", "Fuldtilkoblet", "ARM"),
         ("SMARTHOME", "Frakoblet", "DISARM"),
@@ -367,3 +367,9 @@ def test_session_expired_answer():
     assert P.is_session_expired("Adgang nægtet: Sessionen er udløbet!")
     assert not P.is_unauthorized("Adgang nægtet: Sessionen er udløbet!")
     assert not P.is_session_expired('{"result" : 1, "message" : "Opdateret."}')
+
+
+def test_wrong_password_answer():
+    # What a SMARTHOME panel answers, with HTTP 200, to a wrong password.
+    assert P.is_unauthorized("Adgang nægtet: Forkert password!")
+    assert not P.is_session_expired("Adgang nægtet: Forkert password!")

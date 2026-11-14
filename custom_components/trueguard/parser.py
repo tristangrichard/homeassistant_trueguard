@@ -30,11 +30,13 @@ MODERN_VERSIONS = ("GATE-03", DEVICE_SMART_HOME)
 # These lists, SUPPORTED_VERSIONS, and GATE03_STATES_MAPPING are modified from
 # pythonegardia (MIT), see THIRD_PARTY_NOTICES.
 SENSOR_TYPES_TO_IGNORE = ("Remote Controller", "Remote Keypad", "Keypad")
-UNAUTHORIZED_MESSAGES = ("Unauthorized", "Access Denied")
-# The panel sometimes answers a request with a plain-text session error, for
-# example "Adgang nægtet: Sessionen er udløbet!", and has then done nothing.
-# Asking again works.
-SESSION_EXPIRED_MESSAGES = ("Adgang nægtet", "Sessionen er udløbet", "Session expired")
+# A wrong password is answered with HTTP 200 and plain text, for example
+# "Adgang nægtet: Forkert password!".
+UNAUTHORIZED_MESSAGES = ("Unauthorized", "Access Denied", "Forkert password")
+# The panel sometimes answers a request with a plain-text session error,
+# "Adgang nægtet: Sessionen er udløbet!", and has then done nothing. Asking
+# again works. ("Adgang nægtet" alone also starts the wrong-password answer.)
+SESSION_EXPIRED_MESSAGES = ("Sessionen er udløbet", "Session expired")
 
 GATE03_STATES_MAPPING = {
     "FULL ARM": "ARM",
@@ -47,7 +49,7 @@ SMARTHOME_STATES_MAPPING = {
     "FRAKOBLET": "DISARM",
     "DELTILKOBLING 1": "HOME",
     "DELTILKOBLING 2": "NIGHT",
-    "DELTILKOBLING 3": "HOME",
+    "DELTILKOBLING 3": "CUSTOM",
     "FULDSIKRING": "ARM",
 }
 # Fallbacks by prefix for mode texts that vary between firmware versions,
@@ -57,6 +59,8 @@ MODE_PREFIXES = (
     ("DISARM", "DISARM"),
     ("DELTILKOBLING 2", "NIGHT"),
     ("DELTILKOBLET 2", "NIGHT"),
+    ("DELTILKOBLING 3", "CUSTOM"),
+    ("DELTILKOBLET 3", "CUSTOM"),
     ("DELTILKOBL", "HOME"),
     ("HOME ARM", "HOME"),
     ("FULDSIKR", "ARM"),
@@ -93,8 +97,9 @@ def map_mode(mapping: dict[str, str], status: str) -> str:
 ARM_AWAY_MODE = {"WV-1716": 0, "GATE-01": 0, "GATE-02": 0, "GATE-03": 1, DEVICE_SMART_HOME: 1}
 ARM_HOME_MODE = {"WV-1716": 1, "GATE-01": 1, "GATE-02": 1, "GATE-03": 2, DEVICE_SMART_HOME: 2}
 DISARM_MODE = {"WV-1716": 2, "GATE-01": 4, "GATE-02": 4, "GATE-03": 0, DEVICE_SMART_HOME: 0}
-# Partial arm 2 ("Deltilkobling 2"), tested on a SMARTHOME panel only.
+# Partial arm 2 and 3 ("Deltilkobling 2" / "3"), tested on a SMARTHOME panel only.
 ARM_NIGHT_MODE = {DEVICE_SMART_HOME: 3}
+ARM_CUSTOM_BYPASS_MODE = {DEVICE_SMART_HOME: 4}
 
 # Sensor type codes.
 TYPE_REMOTE = 2
